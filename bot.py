@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import json, os, asyncio, random
 from datetime import datetime, timedelta
 
@@ -23,11 +22,25 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 def is_mod(interaction):
     data = load_json("config.json")
-    roles = data.get(str(interaction.guild.id), [])
+    roles = [int(r) for r in data.get(str(interaction.guild.id), [])]
     return any(r.id in roles for r in interaction.user.roles)
 
 def is_owner(interaction):
     return interaction.user.id == interaction.guild.owner_id
+
+def get_logs(guild_id):
+    data = load_json("logs.json")
+    return data.get(str(guild_id))
+
+async def send_log(guild, embed):
+    log_id = get_logs(guild.id)
+    if log_id:
+        channel = guild.get_channel(log_id)
+        if channel:
+            await channel.send(embed=embed)
+
+def dm_embed(title, description, color):
+    return discord.Embed(title=title, description=description, color=color)
 
 @bot.event
 async def on_ready():
@@ -38,65 +51,130 @@ async def on_ready():
 @bot.tree.command(name="mods")
 async def mods(interaction: discord.Interaction, roles: str):
     if not is_owner(interaction):
-        return await interaction.response.send_message("Only server owner.", ephemeral=True)
+        return await interaction.response.send_message("Only owner.", ephemeral=True)
 
     role_ids = [int(r.strip("<@&>")) for r in roles.split()]
     data = load_json("config.json")
     data[str(interaction.guild.id)] = role_ids
     save_json("config.json", data)
 
-    await interaction.response.send_message("Mods updated.")
+    await interaction.response.send_message("Mods set.", ephemeral=True)
+
+@bot.tree.command(name="logs")
+async def logs(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not is_owner(interaction):
+        return await interaction.response.send_message("Only owner.", ephemeral=True)
+
+    data = load_json("logs.json")
+    data[str(interaction.guild.id)] = channel.id
+    save_json("logs.json", data)
+
+    await interaction.response.send_message("Logs set.", ephemeral=True)
+
+@bot.tree.command(name="role")
+async def role_cmd(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if not is_mod(interaction):
+        return
+
+    if role in member.roles:
+        await member.remove_roles(role)
+        action = "Removed"
+    else:
+        await member.add_roles(role)
+        action = "Added"
+
+    await interaction.response.send_message(f"{action} role.")
 
 @bot.tree.command(name="warn")
 async def warn(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
-    await member.send(f"You were warned: {reason}")
-    await interaction.response.send_message("Warned.")
 
-@bot.tree.command(name="mute")
-async def mute(interaction, member: discord.Member, minutes: int, reason: str):
-    if not is_mod(interaction): return
-    await member.timeout(timedelta(minutes=minutes))
-    await interaction.response.send_message("Muted.")
+    embed = dm_embed("Warned", reason, discord.Color.orange())
 
-@bot.tree.command(name="unmute")
-async def unmute(interaction, member: discord.Member):
-    if not is_mod(interaction): return
-    await member.timeout(None)
-    await interaction.response.send_message("Unmuted.")
+    try:
+        await member.send(embed=embed)
+    except:
+        pass
 
-@bot.tree.command(name="ban")
-async def ban(interaction, member: discord.Member, reason: str):
-    if not is_mod(interaction): return
-    await member.ban(reason=reason)
-    await interaction.response.send_message("Banned.")
+    await send_log(interaction.guild, discord.Embed(
+        title="Warn",
+        description=f"{member} warned by {interaction.user}\nReason: {reason}",
+        color=discord.Color.orange()
+    ))
+
+    await interaction.response.send_message("Warn sent.")
 
 @bot.tree.command(name="kick")
 async def kick(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
+
+    embed = dm_embed("Kicked", reason, discord.Color.red())
+
+    try:
+        await member.send(embed=embed)
+    except:
+        pass
+
     await member.kick(reason=reason)
+
+    await send_log(interaction.guild, discord.Embed(
+        title="Kick",
+        description=f"{member} kicked by {interaction.user}\nReason: {reason}",
+        color=discord.Color.red()
+    ))
+
     await interaction.response.send_message("Kicked.")
 
-@bot.tree.command(name="clear")
-async def clear(interaction, amount: int):
+@bot.tree.command(name="ban")
+async def ban(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
-    await interaction.channel.purge(limit=amount)
-    await interaction.response.send_message("Cleared.", ephemeral=True)
+
+    embed = dm_embed("Banned", reason, discord.Color.dark_red())
+
+    try:
+        await member.send(embed=embed)
+    except:
+        pass
+
+    await member.ban(reason=reason)
+
+    await send_log(interaction.guild, discord.Embed(
+        title="Ban",
+        description=f"{member} banned by {interaction.user}\nReason: {reason}",
+        color=discord.Color.dark_red()
+    ))
+
+    await interaction.response.send_message("Banned.")
+
+@bot.tree.command(name="mute")
+async def mute(interaction, member: discord.Member, minutes: int, reason: str):
+    if not is_mod(interaction): return
+
+    await member.timeout(timedelta(minutes=minutes))
+
+    embed = dm_embed("Muted", reason, discord.Color.blurple())
+
+    try:
+        await member.send(embed=embed)
+    except:
+        pass
+
+    await send_log(interaction.guild, discord.Embed(
+        title="Mute",
+        description=f"{member} muted by {interaction.user}\nReason: {reason}",
+        color=discord.Color.blurple()
+    ))
+
+    await interaction.response.send_message("Muted.")
 
 @bot.tree.command(name="giveawaycreate")
-async def giveaway(interaction: discord.Interaction, name: str, prize: str, description: str, winners: int, time: str):
-    if not is_mod(interaction):
-        return
+async def giveaway(interaction, name: str, prize: str, description: str, winners: int, time: str):
+    if not is_mod(interaction): return
 
     unit = time[-1]
     value = int(time[:-1])
 
-    seconds = value * {
-        "s": 1,
-        "m": 60,
-        "h": 3600,
-        "d": 86400
-    }.get(unit, 60)
+    seconds = value * {"s":1,"m":60,"h":3600,"d":86400}.get(unit,60)
 
     end_time = datetime.utcnow().timestamp() + seconds
 
@@ -105,8 +183,6 @@ async def giveaway(interaction: discord.Interaction, name: str, prize: str, desc
         description=f"{description}\n\nPrize: **{prize}**",
         color=discord.Color.green()
     )
-
-    embed.set_footer(text=f"{winners} winners | Ends in {time}")
 
     msg = await interaction.channel.send(embed=embed)
     await msg.add_reaction("🎉")
@@ -145,17 +221,6 @@ async def check_giveaways():
         save_json("giveaways.json", data)
         await asyncio.sleep(10)
 
-@bot.tree.command(name="countchannel")
-async def countchannel(interaction: discord.Interaction, channel: discord.TextChannel, start: int):
-    if not is_mod(interaction):
-        return
-
-    data = load_json("counting.json")
-    data[str(channel.id)] = start
-    save_json("counting.json", data)
-
-    await interaction.response.send_message("Counting channel set.")
-
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -190,15 +255,6 @@ async def on_message(message):
 
         await message.delete()
         await webhook.delete()
-
-    @bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error):
-    print("APP COMMAND ERROR:", error)
-
-    if interaction.response.is_done():
-        await interaction.followup.send(f"❌ Error: {str(error)}", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"❌ Error: {str(error)}", ephemeral=True)
 
     await bot.process_commands(message)
 

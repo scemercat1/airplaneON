@@ -1,208 +1,168 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json
-import os
-import asyncio
+import json, os, asyncio, random
 from datetime import datetime, timedelta
 
-OWNER_ID = 1345769207588978708
-CONFIG_FILE = "config.json"
-CASES_FILE = "cases.json"
-APPEAL_SERVER = "https://discord.gg/eNSaCCZk9f"
+DATA_PATH = "/data"
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-intents.guilds = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-def load_json(file):
-    if os.path.exists(file):
-        with open(file, "r") as f:
+def load_json(name):
+    path = f"{DATA_PATH}/{name}"
+    if os.path.exists(path):
+        with open(path, "r") as f:
             return json.load(f)
     return {}
 
-def save_json(file, data):
-    with open(file, "w") as f:
+def save_json(name, data):
+    with open(f"{DATA_PATH}/{name}", "w") as f:
         json.dump(data, f, indent=2)
 
-def has_mod_role(interaction: discord.Interaction):
-    data = load_json(CONFIG_FILE)
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+def is_mod(interaction):
+    data = load_json("config.json")
     roles = data.get(str(interaction.guild.id), [])
     return any(r.id in roles for r in interaction.user.roles)
 
-def next_case_id(guild_id, user_id):
-    data = load_json(CASES_FILE)
-    key = f"{guild_id}:{user_id}"
-    data[key] = data.get(key, 0) + 1
-    save_json(CASES_FILE, data)
-    return data[key]
-
-def punishment_embed(punishment, moderator, reason, case_id):
-    e = discord.Embed(
-        title=f"❗️ You were {punishment}",
-        description="You received a punishment from our server staff for breaking the rules.\nPlease review the details below. 👇🏻",
-        color=discord.Color.red(),
-        timestamp=datetime.utcnow()
-    )
-    e.add_field(name="➡️ Punishment", value=punishment, inline=False)
-    e.add_field(name="➡️ Moderator", value=moderator, inline=False)
-    e.add_field(name="➡️ Time", value=f"<t:{int(datetime.utcnow().timestamp())}:F>", inline=False)
-    e.add_field(name="➡️ Case ID", value=str(case_id), inline=False)
-    e.add_field(name="➡️ Reason", value=reason, inline=False)
-    if punishment in ["mute", "ban"]:
-        e.add_field(name="APPEAL SERVER", value=APPEAL_SERVER, inline=False)
-    return e
+def is_owner(interaction):
+    return interaction.user.id == interaction.guild.owner_id
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
 
-@bot.tree.command(name="config")
-async def config(interaction: discord.Interaction, roles: str):
-    if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("Access denied.", ephemeral=True)
-        return
+@bot.tree.command(name="mods")
+async def mods(interaction: discord.Interaction, roles: str):
+    if not is_owner(interaction):
+        return await interaction.response.send_message("Only server owner.", ephemeral=True)
+
     role_ids = [int(r.strip("<@&>")) for r in roles.split()]
-    data = load_json(CONFIG_FILE)
+    data = load_json("config.json")
     data[str(interaction.guild.id)] = role_ids
-    save_json(CONFIG_FILE, data)
-    await interaction.response.send_message("Moderation roles configured.", ephemeral=True)
+    save_json("config.json", data)
+
+    await interaction.response.send_message("Mods updated.")
 
 @bot.tree.command(name="warn")
-async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
-    if not has_mod_role(interaction):
-        return
-    case_id = next_case_id(interaction.guild.id, member.id)
-    embed = punishment_embed("warned", interaction.user.name, reason, case_id)
-    await member.send(embed=embed)
-    await interaction.response.send_message(f"{member.mention} warned.")
+async def warn(interaction, member: discord.Member, reason: str):
+    if not is_mod(interaction): return
+    await member.send(f"You were warned: {reason}")
+    await interaction.response.send_message("Warned.")
 
 @bot.tree.command(name="mute")
-async def mute(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str):
-    if not has_mod_role(interaction):
-        return
+async def mute(interaction, member: discord.Member, minutes: int, reason: str):
+    if not is_mod(interaction): return
     await member.timeout(timedelta(minutes=minutes))
-    case_id = next_case_id(interaction.guild.id, member.id)
-    embed = punishment_embed("muted", interaction.user.name, reason, case_id)
-    await member.send(embed=embed)
-    await interaction.response.send_message(f"{member.mention} muted.")
+    await interaction.response.send_message("Muted.")
 
 @bot.tree.command(name="unmute")
-async def unmute(interaction: discord.Interaction, member: discord.Member):
-    if not has_mod_role(interaction):
-        return
+async def unmute(interaction, member: discord.Member):
+    if not is_mod(interaction): return
     await member.timeout(None)
-    await interaction.response.send_message(f"{member.mention} unmuted.")
+    await interaction.response.send_message("Unmuted.")
 
 @bot.tree.command(name="ban")
-async def ban(interaction: discord.Interaction, member: discord.Member, reason: str):
-    if not has_mod_role(interaction):
-        return
-    case_id = next_case_id(interaction.guild.id, member.id)
-    embed = punishment_embed("banned", interaction.user.name, reason, case_id)
-    await member.send(embed=embed)
+async def ban(interaction, member: discord.Member, reason: str):
+    if not is_mod(interaction): return
     await member.ban(reason=reason)
-    await interaction.response.send_message(f"{member.mention} banned.")
-
-@bot.tree.command(name="unban")
-async def unban(interaction: discord.Interaction, user_id: str):
-    if not has_mod_role(interaction):
-        return
-    user = await bot.fetch_user(int(user_id))
-    await interaction.guild.unban(user)
-    await interaction.response.send_message(f"{user} unbanned.")
+    await interaction.response.send_message("Banned.")
 
 @bot.tree.command(name="kick")
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str):
-    if not has_mod_role(interaction):
-        return
-    case_id = next_case_id(interaction.guild.id, member.id)
-    embed = punishment_embed("kicked", interaction.user.name, reason, case_id)
-    await member.send(embed=embed)
+async def kick(interaction, member: discord.Member, reason: str):
+    if not is_mod(interaction): return
     await member.kick(reason=reason)
-    await interaction.response.send_message(f"{member.mention} kicked.")
+    await interaction.response.send_message("Kicked.")
 
 @bot.tree.command(name="clear")
-async def clear(interaction: discord.Interaction, amount: int):
-    if not has_mod_role(interaction):
-        return
+async def clear(interaction, amount: int):
+    if not is_mod(interaction): return
     await interaction.channel.purge(limit=amount)
-    await interaction.response.send_message("Messages deleted.", ephemeral=True)
+    await interaction.response.send_message("Cleared.", ephemeral=True)
 
-@bot.tree.command(name="lock")
-async def lock(interaction: discord.Interaction):
-    if not has_mod_role(interaction):
+@bot.tree.command(name="giveawaycreate")
+async def giveaway(interaction: discord.Interaction, name: str, prize: str, description: str, winners: int, time: str):
+    if not is_mod(interaction):
         return
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-    await interaction.response.send_message("Channel locked.")
 
-@bot.tree.command(name="unlock")
-async def unlock(interaction: discord.Interaction):
-    if not has_mod_role(interaction):
-        return
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-    await interaction.response.send_message("Channel unlocked.")
+    unit = time[-1]
+    value = int(time[:-1])
 
-@bot.tree.command(name="slowmode")
-async def slowmode(interaction: discord.Interaction, seconds: int):
-    if not has_mod_role(interaction):
-        return
-    await interaction.channel.edit(slowmode_delay=seconds)
-    await interaction.response.send_message("Slowmode updated.")
+    seconds = value * {
+        "s": 1,
+        "m": 60,
+        "h": 3600,
+        "d": 86400
+    }.get(unit, 60)
 
-@bot.tree.command(name="nick")
-async def nick(interaction: discord.Interaction, member: discord.Member, nickname: str):
-    if not has_mod_role(interaction):
-        return
-    await member.edit(nick=nickname)
-    await interaction.response.send_message("Nickname changed.")
+    embed = discord.Embed(
+        title=f"🎉 {name}",
+        description=f"{description}\n\nPrize: **{prize}**",
+        color=discord.Color.green()
+    )
 
-@bot.tree.command(name="role_add")
-async def role_add(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-    if not has_mod_role(interaction):
-        return
-    await member.add_roles(role)
-    await interaction.response.send_message("Role added.")
+    embed.set_footer(text=f"{winners} winners | Ends in {time}")
 
-@bot.tree.command(name="role_remove")
-async def role_remove(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-    if not has_mod_role(interaction):
-        return
-    await member.remove_roles(role)
-    await interaction.response.send_message("Role removed.")
+    msg = await interaction.channel.send(embed=embed)
+    await msg.add_reaction("🎉")
 
-@bot.tree.command(name="announce")
-async def announce(interaction: discord.Interaction, message: str):
-    if not has_mod_role(interaction):
-        return
-    await interaction.channel.send(message)
-    await interaction.response.send_message("Announcement sent.", ephemeral=True)
+    await interaction.response.send_message("Giveaway started.", ephemeral=True)
 
-@bot.tree.command(name="poll")
-async def poll(interaction: discord.Interaction, question: str):
-    if not has_mod_role(interaction):
-        return
-    msg = await interaction.channel.send(f"📊 **{question}**")
-    await msg.add_reaction("👍")
-    await msg.add_reaction("👎")
-    await interaction.response.send_message("Poll created.", ephemeral=True)
+    await asyncio.sleep(seconds)
 
-@bot.command(name="manage-servers")
-async def manage_servers(ctx):
-    if ctx.author.id != OWNER_ID:
+    msg = await interaction.channel.fetch_message(msg.id)
+    users = [u async for u in msg.reactions[0].users() if not u.bot]
+
+    if len(users) == 0:
+        return await interaction.channel.send("No winners.")
+
+    winners_list = random.sample(users, min(len(users), winners))
+
+    await interaction.channel.send(
+        f"🎉 Winners: {', '.join([w.mention for w in winners_list])}"
+    )
+
+@bot.tree.command(name="countchannel")
+async def countchannel(interaction: discord.Interaction, channel: discord.TextChannel, start: int):
+    if not is_mod(interaction):
         return
-    msg = await ctx.send("Verifying bot...")
-    await asyncio.sleep(10)
-    await msg.edit(content="Bot is now working (estimated: 10)")
-    await asyncio.sleep(1)
-    await ctx.send("This bot is now verified as an Airplane Instance.")
+
+    data = load_json("counting.json")
+    data[str(channel.id)] = start
+    save_json("counting.json", data)
+
+    await interaction.response.send_message("Counting channel set.")
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    data = load_json("counting.json")
+
+    if str(message.channel.id) in data:
+        expected = data[str(message.channel.id)] + 1
+
+        if not message.content.isdigit() or int(message.content) != expected:
+            await message.delete()
+            return
+
+        data[str(message.channel.id)] = expected
+        save_json("counting.json", data)
+
+        webhook = await message.channel.create_webhook(name="counter")
+
+        await webhook.send(
+            content=message.content,
+            username=message.author.display_name,
+            avatar_url=message.author.display_avatar.url
+        )
+
+        await message.delete()
+        await webhook.delete()
+
+    await bot.process_commands(message)
 
 token = os.getenv("DISCORD_TOKEN")
-if not token:
-    raise RuntimeError("DISCORD_TOKEN is missing!")
-
 bot.run(token)

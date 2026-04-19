@@ -5,6 +5,7 @@ import json, os, asyncio, random
 from datetime import datetime, timedelta
 
 DATA_PATH = "/data"
+last_user = {}
 
 def load_json(name):
     path = f"{DATA_PATH}/{name}"
@@ -31,6 +32,7 @@ def is_owner(interaction):
 @bot.event
 async def on_ready():
     await bot.tree.sync()
+    bot.loop.create_task(check_giveaways())
     print(f"Logged in as {bot.user}")
 
 @bot.tree.command(name="mods")
@@ -96,6 +98,8 @@ async def giveaway(interaction: discord.Interaction, name: str, prize: str, desc
         "d": 86400
     }.get(unit, 60)
 
+    end_time = datetime.utcnow().timestamp() + seconds
+
     embed = discord.Embed(
         title=f"🎉 {name}",
         description=f"{description}\n\nPrize: **{prize}**",
@@ -107,21 +111,39 @@ async def giveaway(interaction: discord.Interaction, name: str, prize: str, desc
     msg = await interaction.channel.send(embed=embed)
     await msg.add_reaction("🎉")
 
+    data = load_json("giveaways.json")
+    data[str(msg.id)] = {
+        "channel": interaction.channel.id,
+        "message": msg.id,
+        "end": end_time,
+        "winners": winners
+    }
+    save_json("giveaways.json", data)
+
     await interaction.response.send_message("Giveaway started.", ephemeral=True)
 
-    await asyncio.sleep(seconds)
+async def check_giveaways():
+    await bot.wait_until_ready()
+    while True:
+        data = load_json("giveaways.json")
 
-    msg = await interaction.channel.fetch_message(msg.id)
-    users = [u async for u in msg.reactions[0].users() if not u.bot]
+        for gid, g in list(data.items()):
+            if datetime.utcnow().timestamp() >= g["end"]:
+                channel = bot.get_channel(g["channel"])
+                msg = await channel.fetch_message(g["message"])
 
-    if len(users) == 0:
-        return await interaction.channel.send("No winners.")
+                users = [u async for u in msg.reactions[0].users() if not u.bot]
 
-    winners_list = random.sample(users, min(len(users), winners))
+                if users:
+                    winners = random.sample(users, min(len(users), g["winners"]))
+                    await channel.send(f"🎉 Winners: {', '.join([w.mention for w in winners])}")
+                else:
+                    await channel.send("No winners.")
 
-    await interaction.channel.send(
-        f"🎉 Winners: {', '.join([w.mention for w in winners_list])}"
-    )
+                del data[gid]
+
+        save_json("giveaways.json", data)
+        await asyncio.sleep(10)
 
 @bot.tree.command(name="countchannel")
 async def countchannel(interaction: discord.Interaction, channel: discord.TextChannel, start: int):
@@ -144,10 +166,17 @@ async def on_message(message):
     if str(message.channel.id) in data:
         expected = data[str(message.channel.id)] + 1
 
-        if not message.content.isdigit() or int(message.content) != expected:
+        if str(message.channel.id) in last_user and last_user[str(message.channel.id)] == message.author.id:
             await message.delete()
             return
 
+        if not message.content.isdigit() or int(message.content) != expected:
+            await message.delete()
+            data[str(message.channel.id)] = 0
+            save_json("counting.json", data)
+            return
+
+        last_user[str(message.channel.id)] = message.author.id
         data[str(message.channel.id)] = expected
         save_json("counting.json", data)
 

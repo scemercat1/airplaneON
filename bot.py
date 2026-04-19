@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import json, os, asyncio, random
 from datetime import datetime, timedelta
+import uuid
 
 DATA_PATH = "/data"
 last_user = {}
@@ -39,8 +40,8 @@ async def send_log(guild, embed):
         if channel:
             await channel.send(embed=embed)
 
-def dm_embed(title, description, color):
-    return discord.Embed(title=title, description=description, color=color)
+def dm_embed(title, desc, color):
+    return discord.Embed(title=title, description=desc, color=color)
 
 @bot.event
 async def on_ready():
@@ -48,8 +49,17 @@ async def on_ready():
     bot.loop.create_task(check_giveaways())
     print(f"Logged in as {bot.user}")
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    print(error)
+    msg = f"❌ Error: {str(error)}"
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
 @bot.tree.command(name="mods")
-async def mods(interaction: discord.Interaction, roles: str):
+async def mods(interaction, roles: str):
     if not is_owner(interaction):
         return await interaction.response.send_message("Only owner.", ephemeral=True)
 
@@ -58,10 +68,10 @@ async def mods(interaction: discord.Interaction, roles: str):
     data[str(interaction.guild.id)] = role_ids
     save_json("config.json", data)
 
-    await interaction.response.send_message("Mods set.", ephemeral=True)
+    await interaction.response.send_message("Mods updated.", ephemeral=True)
 
 @bot.tree.command(name="logs")
-async def logs(interaction: discord.Interaction, channel: discord.TextChannel):
+async def logs(interaction, channel: discord.TextChannel):
     if not is_owner(interaction):
         return await interaction.response.send_message("Only owner.", ephemeral=True)
 
@@ -72,25 +82,24 @@ async def logs(interaction: discord.Interaction, channel: discord.TextChannel):
     await interaction.response.send_message("Logs set.", ephemeral=True)
 
 @bot.tree.command(name="role")
-async def role_cmd(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+async def role(interaction, member: discord.Member, role: discord.Role):
     if not is_mod(interaction):
         return
 
     if role in member.roles:
         await member.remove_roles(role)
-        action = "Removed"
+        action = "removed"
     else:
         await member.add_roles(role)
-        action = "Added"
+        action = "added"
 
-    await interaction.response.send_message(f"{action} role.")
+    await interaction.response.send_message(f"Role {action}.")
 
 @bot.tree.command(name="warn")
 async def warn(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
 
-    embed = dm_embed("Warned", reason, discord.Color.orange())
-
+    embed = dm_embed("Warn", reason, discord.Color.orange())
     try:
         await member.send(embed=embed)
     except:
@@ -108,8 +117,7 @@ async def warn(interaction, member: discord.Member, reason: str):
 async def kick(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
 
-    embed = dm_embed("Kicked", reason, discord.Color.red())
-
+    embed = dm_embed("Kick", reason, discord.Color.red())
     try:
         await member.send(embed=embed)
     except:
@@ -129,8 +137,7 @@ async def kick(interaction, member: discord.Member, reason: str):
 async def ban(interaction, member: discord.Member, reason: str):
     if not is_mod(interaction): return
 
-    embed = dm_embed("Banned", reason, discord.Color.dark_red())
-
+    embed = dm_embed("Ban", reason, discord.Color.dark_red())
     try:
         await member.send(embed=embed)
     except:
@@ -153,7 +160,6 @@ async def mute(interaction, member: discord.Member, minutes: int, reason: str):
     await member.timeout(timedelta(minutes=minutes))
 
     embed = dm_embed("Muted", reason, discord.Color.blurple())
-
     try:
         await member.send(embed=embed)
     except:
@@ -167,20 +173,33 @@ async def mute(interaction, member: discord.Member, minutes: int, reason: str):
 
     await interaction.response.send_message("Muted.")
 
-@bot.tree.command(name="giveawaycreate")
-async def giveaway(interaction, name: str, prize: str, description: str, winners: int, time: str):
-    if not is_mod(interaction): return
+@bot.tree.command(name="countchannel")
+async def countchannel(interaction, channel: discord.TextChannel, start: int):
+    if not is_mod(interaction):
+        return
+
+    data = load_json("counting.json")
+    data[str(channel.id)] = start
+    save_json("counting.json", data)
+
+    await interaction.response.send_message("Counting set.", ephemeral=True)
+
+@bot.tree.command(name="giveawaystart")
+async def giveawaystart(interaction, name: str, prize: str, description: str, winners: int, time: str):
+    if not is_mod(interaction):
+        return
 
     unit = time[-1]
     value = int(time[:-1])
 
     seconds = value * {"s":1,"m":60,"h":3600,"d":86400}.get(unit,60)
 
-    end_time = datetime.utcnow().timestamp() + seconds
+    gid = str(uuid.uuid4())[:8]
+    end = datetime.utcnow().timestamp() + seconds
 
     embed = discord.Embed(
         title=f"🎉 {name}",
-        description=f"{description}\n\nPrize: **{prize}**",
+        description=f"{description}\n\nPrize: **{prize}**\nID: `{gid}`",
         color=discord.Color.green()
     )
 
@@ -188,23 +207,53 @@ async def giveaway(interaction, name: str, prize: str, description: str, winners
     await msg.add_reaction("🎉")
 
     data = load_json("giveaways.json")
-    data[str(msg.id)] = {
+    data[gid] = {
         "channel": interaction.channel.id,
         "message": msg.id,
-        "end": end_time,
-        "winners": winners
+        "end": end,
+        "winners": winners,
+        "ended": False
     }
     save_json("giveaways.json", data)
 
-    await interaction.response.send_message("Giveaway started.", ephemeral=True)
+    await interaction.response.send_message(f"Giveaway ID: {gid}", ephemeral=True)
+
+@bot.tree.command(name="greroll")
+async def greroll(interaction, giveaway_id: str):
+    if not is_mod(interaction):
+        return
+
+    data = load_json("giveaways.json")
+
+    if giveaway_id not in data:
+        return await interaction.response.send_message("Invalid ID.", ephemeral=True)
+
+    g = data[giveaway_id]
+
+    channel = bot.get_channel(g["channel"])
+    msg = await channel.fetch_message(g["message"])
+
+    users = [u async for u in msg.reactions[0].users() if not u.bot]
+
+    if not users:
+        return await interaction.response.send_message("No users.", ephemeral=True)
+
+    winner = random.choice(users)
+
+    await channel.send(f"🔁 New winner: {winner.mention}")
+
+    await interaction.response.send_message("Rerolled.", ephemeral=True)
 
 async def check_giveaways():
     await bot.wait_until_ready()
+
     while True:
         data = load_json("giveaways.json")
+        now = datetime.utcnow().timestamp()
 
         for gid, g in list(data.items()):
-            if datetime.utcnow().timestamp() >= g["end"]:
+
+            if not g.get("ended") and now >= g["end"]:
                 channel = bot.get_channel(g["channel"])
                 msg = await channel.fetch_message(g["message"])
 
@@ -216,6 +265,10 @@ async def check_giveaways():
                 else:
                     await channel.send("No winners.")
 
+                g["ended"] = True
+                g["delete_at"] = now + 3600
+
+            if g.get("delete_at") and now >= g["delete_at"]:
                 del data[gid]
 
         save_json("giveaways.json", data)

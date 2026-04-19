@@ -191,6 +191,15 @@ async def on_message(message):
         await message.delete()
         await webhook.delete()
 
+    @bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    print("APP COMMAND ERROR:", error)
+
+    if interaction.response.is_done():
+        await interaction.followup.send(f"❌ Error: {str(error)}", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Error: {str(error)}", ephemeral=True)
+
     await bot.process_commands(message)
 
 token = os.getenv("DISCORD_TOKEN")

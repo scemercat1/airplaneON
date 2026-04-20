@@ -20,21 +20,33 @@ init();
 app.use(express.json());
 
 // ==========================================
-//          HOMEPAGE & STATIC FIX
+//          HOMEPAGE & STATIC FILES
 // ==========================================
 
-// This specifically fixes the "Not Found" error for the main site
+// Serve static assets from the nested folder and the standard root public folder
+app.use(express.static(path.join(__dirname, "dashboard", "public")));
+app.use(express.static("public")); 
+
+// Explicit homepage route
 app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "dashboard", "public", "index.html"));
+    // Tries to send the dashboard index, falls back to a simple string if not found
+    const indexPath = path.join(__dirname, "dashboard", "public", "index.html");
+    if (require('fs').existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.send("Dashboard running");
+    }
 });
 
-// This serves your CSS and other files in that folder
-app.use(express.static(path.join(__dirname, "dashboard", "public")));
+// Health check endpoint from your old example
+app.get("/health", (req, res) => {
+    res.send("OK");
+});
 
 app.use(session({ secret: "aircraft-dashboard", resave: false, saveUninitialized: false }));
 
 // ==========================================
-//              OAUTH2 & LOGIN
+//               OAUTH2 & LOGIN
 // ==========================================
 app.get("/login", (req, res) => {
     const url = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.REDIRECT)}&response_type=code&scope=identify%20guilds`;
@@ -75,7 +87,7 @@ app.get("/callback", async (req, res) => {
 });
 
 // ==========================================
-//          DASHBOARD ROUTING LOOP
+//           DASHBOARD ROUTING
 // ==========================================
 app.get("/dashboard", (req, res) => {
     if (!req.session.guilds) return res.redirect("/login");
@@ -94,7 +106,7 @@ app.get("/dashboard/:guildId", async (req, res) => {
 });
 
 // ==========================================
-//                API ENDPOINTS
+//                API ACTIONS
 // ==========================================
 app.post("/api/save", async (req, res) => {
     const { guild, warn, kick } = req.body;
@@ -130,104 +142,66 @@ app.post("/api/announce", async (req, res) => {
 // ==========================================
 const BASE_STYLE = `
 <style>
-    body { background: #0f0f0f; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; margin: 0; }
+    body { background: #0f0f0f; color: white; font-family: 'Segoe UI', sans-serif; padding: 20px; margin: 0; }
     .container { max-width: 1000px; margin: 0 auto; }
     h1 { text-align: center; color: #5865F2; }
     .server-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; padding: 20px 0; }
-    .server-card { background: #1a1a1a; padding: 20px; border-radius: 12px; text-align: center; cursor: pointer; transition: transform 0.2s, background 0.2s; border: 2px solid transparent; text-decoration: none; color: white; display: block; }
+    .server-card { background: #1a1a1a; padding: 20px; border-radius: 12px; text-align: center; text-decoration: none; color: white; display: block; border: 2px solid transparent; transition: 0.2s; }
     .server-card:hover { transform: translateY(-5px); background: #2a2a2a; border-color: #5865F2; }
-    .server-icon { width: 80px; height: 80px; border-radius: 50%; background: #2a2a2a; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: bold; color: #aaa; overflow: hidden;}
+    .server-icon { width: 80px; height: 80px; border-radius: 50%; background: #2a2a2a; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; overflow: hidden;}
     .server-icon img { width: 100%; height: 100%; object-fit: cover; }
-    .server-name { font-weight: bold; font-size: 1.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .header-bar { display: flex; align-items: center; justify-content: space-between; background: #1a1a1a; padding: 15px 30px; border-radius: 12px; margin-bottom: 20px; }
-    .back-btn { background: #333; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; text-decoration: none; font-size: 0.9em; }
-    .current-server { display: flex; align-items: center; gap: 15px; }
-    .current-icon { width: 40px; height: 40px; border-radius: 50%; background: #2a2a2a; overflow: hidden; display: flex; align-items: center; justify-content: center;}
-    .current-icon img { width: 100%; height: 100%; object-fit: cover; }
     .panels { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
     .card { background: #1a1a1a; padding: 25px; border-radius: 12px; }
-    h2 { border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
-    label { display: block; margin-top: 15px; color: #aaa; font-size: 0.9em; }
     input, textarea { width: 100%; padding: 12px; margin-top: 5px; background: #2a2a2a; color: white; border: 1px solid #333; border-radius: 6px; box-sizing: border-box; }
-    textarea { height: 100px; resize: vertical; }
-    .btn-group { margin-top: 20px; display: flex; gap: 10px; }
-    button { padding: 12px 24px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; transition: background 0.2s; }
-    .btn-save { background: #5865F2; color: white; }
-    .btn-save:hover { background: #4752c4; }
-    .btn-ann { background: #2ecc71; color: white; width: 100%; margin-top: 10px;}
-    .btn-ann:hover { background: #27ae60; }
+    button { padding: 12px 24px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; background: #5865F2; color: white; }
 </style>
 `;
 
 function getIconUrl(guild) {
-    if (guild.icon) return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`;
-    return null;
+    return guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : null;
 }
 
 function renderServerList(guilds) {
     const cards = guilds.map(g => {
-        const iconUrl = getIconUrl(g);
-        const iconHtml = iconUrl ? `<img src="${iconUrl}" alt="${g.name}">` : g.name.charAt(0);
-        return `
-            <a href="/dashboard/${g.id}" class="server-card">
-                <div class="server-icon">${iconHtml}</div>
-                <div class="server-name">${g.name}</div>
-            </a>
-        `;
+        const icon = getIconUrl(g);
+        return `<a href="/dashboard/${g.id}" class="server-card"><div class="server-icon">${icon ? `<img src="${icon}">` : g.name[0]}</div><div class="server-name">${g.name}</div></a>`;
     }).join("");
-    return `<!DOCTYPE html><html><head><title>Select Server | Aircraft</title>${BASE_STYLE}</head><body><div class="container"><h1>🔥 Aircraft Dashboard</h1><h2>Select a Server to Configure</h2><div class="server-grid">${cards}</div></div></body></html>`;
+    return `<html><head><title>Dashboard</title>${BASE_STYLE}</head><body><div class="container"><h1>🔥 Aircraft Dashboard</h1><div class="server-grid">${cards}</div></div></body></html>`;
 }
 
 function renderServerConfig(guild, settings) {
-    const iconUrl = getIconUrl(guild);
-    const iconHtml = iconUrl ? `<img src="${iconUrl}">` : guild.name.charAt(0);
-    return `
-<!DOCTYPE html>
-<html>
-<head><title>Config | ${guild.name}</title>${BASE_STYLE}</head>
-<body>
+    return `<html><head><title>${guild.name}</title>${BASE_STYLE}</head><body>
     <div class="container">
-        <div class="header-bar">
-            <div class="current-server">
-                <div class="current-icon">${iconHtml}</div>
-                <h3>${guild.name}</h3>
-            </div>
-            <a href="/dashboard" class="back-btn">← Back to Servers</a>
-        </div>
+        <h2>Configuring ${guild.name}</h2>
         <div class="panels">
             <div class="card">
-                <h2>Moderation Custom Messages</h2>
-                <p><small>Use <code>{reason}</code> to insert the reason.</small></p>
-                <label>Warn Message</label>
-                <input id="warn" value="${settings.warn || ''}">
-                <label>Kick Message</label>
-                <input id="kick" value="${settings.kick || ''}">
-                <div class="btn-group"><button class="btn-save" onclick="saveSettings()">Save Mod Settings</button></div>
+                <h3>Moderation</h3>
+                <label>Warn Message</label><input id="warn" value="${settings.warn || ''}">
+                <label>Kick Message</label><input id="kick" value="${settings.kick || ''}">
+                <button onclick="save()">Save</button>
             </div>
             <div class="card">
-                <h2>Send Announcement</h2>
-                <label>Channel ID</label>
-                <input id="annChannel" placeholder="1234567890">
-                <label>Message</label>
-                <textarea id="annMsg"></textarea>
-                <button class="btn-ann" onclick="sendAnn()">Send Announcement</button>
+                <h3>Announce</h3>
+                <input id="ch" placeholder="Channel ID"><textarea id="msg"></textarea>
+                <button style="background:#2ecc71" onclick="ann()">Send</button>
             </div>
         </div>
     </div>
     <script>
-        const guildId = "${guild.id}";
-        async function saveSettings() {
-            await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guild: guildId, warn: document.getElementById("warn").value, kick: document.getElementById("kick").value }) });
-            alert("Saved!");
+        async function save(){
+            await fetch("/api/save", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({guild:"${guild.id}", warn:document.getElementById("warn").value, kick:document.getElementById("kick").value})});
+            alert("Saved");
         }
-        async function sendAnn() {
-            const res = await fetch("/api/announce", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: document.getElementById("annChannel").value, message: document.getElementById("annMsg").value }) });
+        async function ann(){
+            const res = await fetch("/api/announce", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({channel:document.getElementById("ch").value, message:document.getElementById("msg").value})});
             const data = await res.json();
-            if(data.ok) alert("Sent!"); else alert("Error: " + JSON.stringify(data.error));
+            alert(data.ok ? "Sent" : "Error");
         }
     </script>
-</body></html>`;
+    </body></html>`;
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0");
+app.listen(PORT, "0.0.0.0", () => {
+    console.log("Running on", PORT);
+});

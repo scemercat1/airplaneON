@@ -42,17 +42,21 @@ async def send_log(guild, embed):
 def dm_embed(title, desc, color):
     return discord.Embed(title=title, description=desc, color=color)
 
-@bot.event
-async def on_ready():
-    guild_ids = [str(g.id) for g in bot.guilds]
-
-    with open("/data/bot_guilds.json", "w") as f:
-        json.dump(guild_ids, f)
-
-    print("Guild cache updated")
+# ================= FIX: KEEP SINGLE READY =================
 
 @bot.event
 async def on_ready():
+
+    # 🔥 DASHBOARD SYNC FIX (ADDED ONLY)
+    try:
+        guild_ids = [str(g.id) for g in bot.guilds]
+
+        with open("/data/bot_guilds.json", "w") as f:
+            json.dump(guild_ids, f)
+
+    except Exception as e:
+        print("Guild sync error:", e)
+
     try:
         await bot.tree.sync()
         print("Slash commands synced")
@@ -192,8 +196,6 @@ async def countchannel(interaction, channel: discord.TextChannel, start: int):
 # ---------------- GIVEAWAY ----------------
 @bot.tree.command(name="giveawaystart")
 async def giveawaystart(interaction, name: str, prize: str, description: str, winners: int, time: str):
-    if not is_mod(interaction):
-        return
 
     unit = time[-1]
     value = int(time[:-1])
@@ -304,17 +306,6 @@ async def on_message(message):
         last_user[str(message.channel.id)] = message.author.id
         data[str(message.channel.id)] = expected
         save_json("counting.json", data)
-
-        webhook = await message.channel.create_webhook(name="counter")
-
-        await webhook.send(
-            content=message.content,
-            username=message.author.display_name,
-            avatar_url=message.author.display_avatar.url
-        )
-
-        await message.delete()
-        await webhook.delete()
 
     await bot.process_commands(message)
 

@@ -9,6 +9,7 @@ const app = express();
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REDIRECT = process.env.REDIRECT;
+const TOKEN = process.env.DISCORD_TOKEN;
 
 const DATA_PATH = "/data";
 
@@ -16,10 +17,14 @@ app.use(express.json());
 app.use(express.static("public"));
 
 app.use(session({
-    secret: "aircraft-dashboard",
+    secret: "aircraft-dashboard-secret",
     resave: false,
     saveUninitialized: false
 }));
+
+/* =========================
+   FILE HELPERS
+========================= */
 
 function read(file) {
     try {
@@ -30,11 +35,15 @@ function read(file) {
 }
 
 function write(file, data) {
-    fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
+    try {
+        fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
+    } catch (e) {
+        console.log("Write error:", e);
+    }
 }
 
 /* =========================
-   🔐 LOGIN
+   LOGIN
 ========================= */
 
 app.get("/login", (req, res) => {
@@ -42,26 +51,27 @@ app.get("/login", (req, res) => {
         `https://discord.com/api/oauth2/authorize` +
         `?client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
-        `&response_type=code&scope=identify%20guilds`;
+        `&response_type=code` +
+        `&scope=identify%20guilds`;
 
     res.redirect(url);
 });
 
 /* =========================
-   🔁 CALLBACK
+   CALLBACK + GUILD FILTER
 ========================= */
 
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
 
-    const params = new URLSearchParams();
-    params.append("client_id", CLIENT_ID);
-    params.append("client_secret", CLIENT_SECRET);
-    params.append("grant_type", "authorization_code");
-    params.append("code", code);
-    params.append("redirect_uri", REDIRECT);
-
     try {
+        const params = new URLSearchParams();
+        params.append("client_id", CLIENT_ID);
+        params.append("client_secret", CLIENT_SECRET);
+        params.append("grant_type", "authorization_code");
+        params.append("code", code);
+        params.append("redirect_uri", REDIRECT);
+
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
             body: params,
@@ -72,23 +82,38 @@ app.get("/callback", async (req, res) => {
 
         const token = await tokenRes.json();
 
-        const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+        const userGuildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
             headers: {
                 Authorization: `Bearer ${token.access_token}`
             }
         });
 
-        req.session.guilds = await guildsRes.json();
+        let userGuilds = await userGuildsRes.json();
+
+        const botGuildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+            headers: {
+                Authorization: `Bot ${TOKEN}`
+            }
+        });
+
+        const botGuilds = await botGuildsRes.json();
+
+        const botGuildIds = botGuilds.map(g => g.id);
+
+        // 🔥 FILTER: only mutual servers
+        userGuilds = userGuilds.filter(g => botGuildIds.includes(g.id));
+
+        req.session.guilds = userGuilds;
 
         res.redirect("/dashboard");
-    } catch (e) {
-        console.log(e);
+    } catch (err) {
+        console.log(err);
         res.send("OAuth failed");
     }
 });
 
 /* =========================
-   🌐 DASHBOARD
+   DASHBOARD UI
 ========================= */
 
 app.get("/dashboard", (req, res) => {
@@ -104,13 +129,13 @@ app.get("/dashboard", (req, res) => {
 <head>
 <title>Aircraft Dashboard</title>
 <style>
-body {background:#0f0f0f;color:white;font-family:Arial;margin:0}
-.container{padding:20px}
-.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
-input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none}
-button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
-button:hover{background:#4752c4}
-h2{margin-top:0}
+body {margin:0;font-family:Arial;background:#0f0f0f;color:white}
+.container {padding:20px}
+.card {background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
+input,select,textarea {width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
+button {padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
+button:hover {background:#4752c4}
+h2 {margin-top:0}
 </style>
 </head>
 <body>
@@ -120,23 +145,23 @@ h2{margin-top:0}
 <h1>🔥 Aircraft Dashboard</h1>
 
 <div class="card">
-<h2>🔥 Select Server</h2>
+<h2>🔥 Server Select</h2>
 <select id="guild">${guildOptions}</select>
 </div>
 
 <div class="card">
 <h2>🛡 Moderation Messages</h2>
 
-<label>Warn Message</label>
+<label>Warn</label>
 <input id="warn" placeholder="You were warned for {reason}">
 
-<label>Mute Message</label>
+<label>Mute</label>
 <input id="mute" placeholder="You were muted for {reason}">
 
-<label>Ban Message</label>
+<label>Ban</label>
 <input id="ban" placeholder="You were banned for {reason}">
 
-<label>Kick Message</label>
+<label>Kick</label>
 <input id="kick" placeholder="You were kicked for {reason}">
 </div>
 
@@ -144,15 +169,15 @@ h2{margin-top:0}
 <h2>📢 Announcement</h2>
 
 <label>Channel ID</label>
-<input id="ann_channel" placeholder="channel id">
+<input id="channel" placeholder="channel id">
 
 <label>Message</label>
-<textarea id="ann_msg" placeholder="announcement text"></textarea>
+<textarea id="message" placeholder="announcement text"></textarea>
 
-<button onclick="sendAnn()">Send Announcement</button>
+<button onclick="sendAnn()">Send</button>
 </div>
 
-<button onclick="save()">💾 Save Settings</button>
+<button onclick="save()">💾 Save</button>
 
 </div>
 
@@ -165,30 +190,28 @@ async function save(){
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
             guild,
-            warn:document.getElementById("warn").value,
-            mute:document.getElementById("mute").value,
-            ban:document.getElementById("ban").value,
-            kick:document.getElementById("kick").value
+            warn:warn.value,
+            mute:mute.value,
+            ban:ban.value,
+            kick:kick.value
         })
     });
 
-    alert("Saved!");
+    alert("Saved");
 }
 
 async function sendAnn(){
-    const guild=document.getElementById("guild").value;
-
     await fetch("/api/announce",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-            guild,
-            channel:document.getElementById("ann_channel").value,
-            message:document.getElementById("ann_msg").value
+            guild:document.getElementById("guild").value,
+            channel:document.getElementById("channel").value,
+            message:document.getElementById("message").value
         })
     });
 
-    alert("Sent!");
+    alert("Sent");
 }
 </script>
 
@@ -198,15 +221,18 @@ async function sendAnn(){
 });
 
 /* =========================
-   💾 SAVE MOD SETTINGS
+   SAVE MOD SETTINGS
 ========================= */
 
 app.post("/api/save", (req, res) => {
     const mod = read("mod_messages.json");
 
-    const { guild, warn, mute, ban, kick } = req.body;
-
-    mod[guild] = { warn, mute, ban, kick };
+    mod[req.body.guild] = {
+        warn: req.body.warn,
+        mute: req.body.mute,
+        ban: req.body.ban,
+        kick: req.body.kick
+    };
 
     write("mod_messages.json", mod);
 
@@ -214,21 +240,19 @@ app.post("/api/save", (req, res) => {
 });
 
 /* =========================
-   📢 ANNOUNCEMENTS
+   ANNOUNCEMENTS
 ========================= */
 
 app.post("/api/announce", async (req, res) => {
-    const { guild, channel, message } = req.body;
-
     try {
-        await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+        await fetch(`https://discord.com/api/v10/channels/${req.body.channel}/messages`, {
             method: "POST",
             headers: {
-                "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+                "Authorization": `Bot ${TOKEN}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                content: message
+                content: req.body.message
             })
         });
 
@@ -240,7 +264,7 @@ app.post("/api/announce", async (req, res) => {
 });
 
 /* =========================
-   🚀 START
+   START SERVER
 ========================= */
 
 const PORT = process.env.PORT;

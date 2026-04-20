@@ -23,7 +23,7 @@ app.use(session({
 }));
 
 /* =========================
-   FILE SYSTEM
+   FILE HELPERS
 ========================= */
 
 function read(file) {
@@ -43,7 +43,7 @@ function write(file, data) {
 ========================= */
 
 app.get("/", (req, res) => {
-    res.send("Dashboard running");
+    res.send("Aircraft Dashboard running");
 });
 
 /* =========================
@@ -55,20 +55,19 @@ app.get("/login", (req, res) => {
         `https://discord.com/api/oauth2/authorize` +
         `?client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
-        `&response_type=code` +
-        `&scope=identify%20guilds`;
+        `&response_type=code&scope=identify%20guilds`;
 
     res.redirect(url);
 });
 
 /* =========================
-   CALLBACK (FIXED)
+   CALLBACK
 ========================= */
 
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
 
-    if (!code) return res.send("No code");
+    if (!code) return res.send("No code from Discord");
 
     try {
         const params = new URLSearchParams();
@@ -90,7 +89,7 @@ app.get("/callback", async (req, res) => {
 
         if (!tokenRes.ok) {
             console.log("OAuth error:", tokenData);
-            return res.send("OAuth error: " + JSON.stringify(tokenData));
+            return res.send("OAuth error");
         }
 
         if (!tokenData.access_token) {
@@ -104,35 +103,19 @@ app.get("/callback", async (req, res) => {
             }
         });
 
-        let userGuilds = await guildsRes.json();
+        const userGuilds = await guildsRes.json();
 
         if (!Array.isArray(userGuilds)) {
-            return res.send("Guilds error");
+            return res.send("Guild fetch error");
         }
 
-        // 🔥 BOT GUILDS (SAFE METHOD VIA CACHE FILE)
-        let botGuildIds = [];
-
-        try {
-            botGuildIds = JSON.parse(
-                fs.readFileSync(path.join(DATA_PATH, "bot_guilds.json"), "utf8")
-            );
-        } catch {
-            botGuildIds = [];
-        }
-
-        if (!Array.isArray(botGuildIds)) botGuildIds = [];
-
-        // 🔥 FILTER MUTUAL GUILDS
-        const finalGuilds = userGuilds.filter(g => botGuildIds.includes(g.id));
-
-        req.session.guilds = finalGuilds;
+        req.session.guilds = userGuilds;
 
         res.redirect("/dashboard");
 
     } catch (err) {
         console.log("OAuth exception:", err);
-        res.send("OAuth exception (check logs)");
+        res.send("OAuth exception");
     }
 });
 
@@ -143,9 +126,16 @@ app.get("/callback", async (req, res) => {
 app.get("/dashboard", (req, res) => {
     if (!req.session.guilds) return res.redirect("/login");
 
-    const guildOptions = req.session.guilds
-        .map(g => `<option value="${g.id}">${g.name}</option>`)
-        .join("");
+    const botGuilds = read("bot_guilds.json") || [];
+
+    const guildCards = req.session.guilds.map(g => {
+        const hasBot = Array.isArray(botGuilds) && botGuilds.includes(g.id);
+
+        return `
+        <option value="${g.id}">
+            ${g.name} ${hasBot ? "🟢 Bot" : "🔴 No Bot"}
+        </option>`;
+    }).join("");
 
     res.send(`
 <!DOCTYPE html>
@@ -153,12 +143,39 @@ app.get("/dashboard", (req, res) => {
 <head>
 <title>Aircraft Dashboard</title>
 <style>
-body {margin:0;font-family:Arial;background:#0f0f0f;color:white}
-.container{padding:20px}
-.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
-input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
-button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
-button:hover{background:#4752c4}
+body {
+    margin:0;
+    font-family:Arial;
+    background:#0f0f0f;
+    color:white;
+}
+.container {padding:20px;}
+.card {
+    background:#1a1a1a;
+    padding:15px;
+    margin:10px 0;
+    border-radius:10px;
+}
+select, input, textarea {
+    width:100%;
+    padding:8px;
+    margin-top:5px;
+    border-radius:6px;
+    border:none;
+    background:#2a2a2a;
+    color:white;
+}
+button {
+    padding:10px;
+    background:#5865F2;
+    border:none;
+    color:white;
+    border-radius:6px;
+    cursor:pointer;
+}
+button:hover {
+    background:#4752c4;
+}
 </style>
 </head>
 <body>
@@ -168,12 +185,14 @@ button:hover{background:#4752c4}
 <h1>🔥 Aircraft Dashboard</h1>
 
 <div class="card">
-<h2>Server</h2>
-<select id="guild">${guildOptions}</select>
+<h2>📡 Your Servers</h2>
+<select id="guild">
+${guildCards}
+</select>
 </div>
 
 <div class="card">
-<h2>Moderation Messages</h2>
+<h2>🛡 Moderation Messages</h2>
 <input id="warn" placeholder="Warn {reason}">
 <input id="mute" placeholder="Mute {reason}">
 <input id="ban" placeholder="Ban {reason}">
@@ -181,13 +200,13 @@ button:hover{background:#4752c4}
 </div>
 
 <div class="card">
-<h2>Announcement</h2>
+<h2>📢 Announcement</h2>
 <input id="channel" placeholder="Channel ID">
 <textarea id="message" placeholder="Message"></textarea>
 <button onclick="sendAnn()">Send</button>
 </div>
 
-<button onclick="save()">Save</button>
+<button onclick="save()">Save Settings</button>
 
 </div>
 

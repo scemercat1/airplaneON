@@ -1,120 +1,125 @@
 const express = require("express");
 const session = require("express-session");
-const passport = require("passport");
-const Strategy = require("passport-discord").Strategy;
+const fetch = require("node-fetch");
 const fs = require("fs");
-
-const config = require("./config");
+const path = require("path");
 
 const app = express();
 
-/* ================= BOT GUILDS ================= */
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const REDIRECT = process.env.REDIRECT;
 
-function getBotGuilds() {
-    try {
-        return JSON.parse(fs.readFileSync("./bot_guilds.json", "utf8"));
-    } catch {
-        return [];
-    }
-}
+const DATA_PATH = "/data";
 
-/* ================= PASSPORT ================= */
-
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((obj, done) => done(null, obj));
-
-passport.use(new Strategy({
-    clientID: config.id,
-    clientSecret: config.clientSecret,
-    callbackURL: config.redirect,
-    scope: ["identify", "guilds"]
-}, (accessToken, refreshToken, profile, done) => {
-    process.nextTick(() => done(null, profile));
-}));
-
-/* ================= MIDDLEWARE ================= */
+app.use(express.json());
+app.use(express.static("public"));
 
 app.use(session({
-    secret: "secret",
+    secret: "aircraft-dashboard-secret",
     resave: false,
     saveUninitialized: false
 }));
 
-app.use(passport.initialize());
-app.use(passport.session());
-
-/* ================= LOGIN ================= */
-
-app.get("/login", passport.authenticate("discord"));
-
-/* ================= CALLBACK ================= */
-
-app.get("/callback",
-    passport.authenticate("discord", { failureRedirect: "/" }),
-    (req, res) => {
-        res.redirect("/dashboard");
+function read(file) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(DATA_PATH, file), "utf8"));
+    } catch {
+        return {};
     }
-);
+}
 
-/* ================= DASHBOARD ================= */
+function write(file, data) {
+    fs.writeFileSync(
+        path.join(DATA_PATH, file),
+        JSON.stringify(data, null, 2)
+    );
+}
 
-app.get("/dashboard", (req, res) => {
-    if (!req.user) return res.redirect("/login");
+app.get("/login", (req, res) => {
+    const url =
+        `https://discord.com/api/oauth2/authorize` +
+        `?client_id=${CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
+        `&response_type=code` +
+        `&scope=identify%20guilds`;
 
-    const botGuilds = getBotGuilds();
+    res.redirect(url);
+});
 
-    const userGuilds = req.user.guilds || [];
+app.get("/callback", async (req, res) => {
+    const code = req.query.code;
 
-    const ownerGuilds = userGuilds.filter(g => g.owner === true);
+    const params = new URLSearchParams();
+    params.append("client_id", CLIENT_ID);
+    params.append("client_secret", CLIENT_SECRET);
+    params.append("grant_type", "authorization_code");
+    params.append("code", code);
+    params.append("redirect_uri", REDIRECT);
 
-    const guilds = ownerGuilds.filter(g =>
-        botGuilds.includes(String(g.id))
+    try {
+        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+            method: "POST",
+            body: params,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
+        });
+
+        const token = await tokenRes.json();
+
+        const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+            headers: {
+                Authorization: `Bearer ${token.access_token}`
+            }
+        });
+
+        const guilds = await guildsRes.json();
+
+        req.session.guilds = guilds;
+
+        res.redirect("/");
+    } catch (err) {
+        console.error("OAuth error:", err);
+        res.send("OAuth failed");
+    }
+});
+
+app.get("/api/guilds", (req, res) => {
+    if (!req.session.guilds) return res.json([]);
+
+    const adminGuilds = req.session.guilds.filter(g =>
+        (g.permissions & 0x8) === 0x8
     );
 
-    let html = `
-    <body style="background:#0f0f0f;color:white;font-family:Arial">
-        <h1>Dashboard</h1>
-
-        <a href="https://discord.com/oauth2/authorize?client_id=${config.id}&permissions=8&scope=bot"
-           style="color:#5865F2">
-           Invite Bot
-        </a>
-
-        <div>
-    `;
-
-    if (guilds.length === 0) {
-        html += `<h3>No servers found</h3>`;
-    } else {
-        guilds.forEach(g => {
-            html += `
-                <div style="background:#1e1e1e;padding:10px;margin:10px;border-radius:8px">
-                    <h3>${g.name}</h3>
-                    <a href="/dashboard/${g.id}" style="color:#5865F2">Open</a>
-                </div>
-            `;
-        });
-    }
-
-    html += `</div></body>`;
-    res.send(html);
+    res.json(adminGuilds);
 });
 
-/* ================= SERVER PAGE ================= */
+app.get("/api/config/:guild", (req, res) => {
+    const config = read("config.json");
+    const logs = read("logs.json");
 
-app.get("/dashboard/:id", (req, res) => {
-    res.send(`
-        <body style="background:#0f0f0f;color:white;font-family:Arial">
-            <h1>Server Settings</h1>
-            <p>Guild ID: ${req.params.id}</p>
-
-            <a href="/dashboard" style="color:#5865F2">Back</a>
-        </body>
-    `);
+    res.json({
+        roles: config[req.params.guild] || [],
+        logs: logs[req.params.guild] || null
+    });
 });
 
-/* ================= START ================= */
+app.post("/api/config/:guild", (req, res) => {
+    const config = read("config.json");
+    const logs = read("logs.json");
 
-app.listen(config.port, () => {
-    console.log("Dashboard running on port", config.port);
+    config[req.params.guild] = req.body.roles || [];
+    logs[req.params.guild] = req.body.logs || null;
+
+    write("config.json", config);
+    write("logs.json", logs);
+
+    res.json({ success: true });
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log("Dashboard running on port " + PORT);
 });

@@ -30,7 +30,7 @@ function read(file) {
     try {
         return JSON.parse(fs.readFileSync(path.join(DATA_PATH, file), "utf8"));
     } catch {
-        return {};
+        return [];
     }
 }
 
@@ -43,7 +43,7 @@ function write(file, data) {
 ========================= */
 
 app.get("/", (req, res) => {
-    res.send("Aircraft Dashboard running");
+    res.send("Aircraft Dashboard Online");
 });
 
 /* =========================
@@ -61,35 +61,36 @@ app.get("/login", (req, res) => {
 });
 
 /* =========================
-   CALLBACK
+   CALLBACK (OAUTH FIXED)
 ========================= */
 
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
 
-    if (!code) return res.send("No code from Discord");
+    if (!code) return res.send("No code received");
 
     try {
-        const params = new URLSearchParams();
-        params.append("client_id", CLIENT_ID);
-        params.append("client_secret", CLIENT_SECRET);
-        params.append("grant_type", "authorization_code");
-        params.append("code", code);
-        params.append("redirect_uri", REDIRECT);
+        const params = new URLSearchParams({
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET,
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: REDIRECT
+        });
 
         const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
             method: "POST",
-            body: params,
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded"
-            }
+            },
+            body: params
         });
 
         const tokenData = await tokenRes.json();
 
         if (!tokenRes.ok) {
             console.log("OAuth error:", tokenData);
-            return res.send("OAuth error");
+            return res.send("OAuth error: " + JSON.stringify(tokenData));
         }
 
         if (!tokenData.access_token) {
@@ -106,7 +107,7 @@ app.get("/callback", async (req, res) => {
         const userGuilds = await guildsRes.json();
 
         if (!Array.isArray(userGuilds)) {
-            return res.send("Guild fetch error");
+            return res.send("Guild fetch failed");
         }
 
         req.session.guilds = userGuilds;
@@ -115,7 +116,7 @@ app.get("/callback", async (req, res) => {
 
     } catch (err) {
         console.log("OAuth exception:", err);
-        res.send("OAuth exception");
+        res.send("OAuth exception (check logs)");
     }
 });
 
@@ -128,8 +129,8 @@ app.get("/dashboard", (req, res) => {
 
     const botGuilds = read("bot_guilds.json") || [];
 
-    const guildCards = req.session.guilds.map(g => {
-        const hasBot = Array.isArray(botGuilds) && botGuilds.includes(g.id);
+    const options = req.session.guilds.map(g => {
+        const hasBot = botGuilds.includes(g.id);
 
         return `
         <option value="${g.id}">
@@ -143,39 +144,12 @@ app.get("/dashboard", (req, res) => {
 <head>
 <title>Aircraft Dashboard</title>
 <style>
-body {
-    margin:0;
-    font-family:Arial;
-    background:#0f0f0f;
-    color:white;
-}
-.container {padding:20px;}
-.card {
-    background:#1a1a1a;
-    padding:15px;
-    margin:10px 0;
-    border-radius:10px;
-}
-select, input, textarea {
-    width:100%;
-    padding:8px;
-    margin-top:5px;
-    border-radius:6px;
-    border:none;
-    background:#2a2a2a;
-    color:white;
-}
-button {
-    padding:10px;
-    background:#5865F2;
-    border:none;
-    color:white;
-    border-radius:6px;
-    cursor:pointer;
-}
-button:hover {
-    background:#4752c4;
-}
+body{margin:0;font-family:Arial;background:#0f0f0f;color:white}
+.container{padding:20px}
+.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
+input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
+button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
+button:hover{background:#4752c4}
 </style>
 </head>
 <body>
@@ -185,38 +159,37 @@ button:hover {
 <h1>🔥 Aircraft Dashboard</h1>
 
 <div class="card">
-<h2>📡 Your Servers</h2>
-<select id="guild">
-${guildCards}
-</select>
+<h2>Servers</h2>
+<select id="guild">${options}</select>
 </div>
 
 <div class="card">
-<h2>🛡 Moderation Messages</h2>
-<input id="warn" placeholder="Warn {reason}">
-<input id="mute" placeholder="Mute {reason}">
-<input id="ban" placeholder="Ban {reason}">
-<input id="kick" placeholder="Kick {reason}">
+<h2>Moderation Messages</h2>
+<input id="warn" placeholder="Warn message">
+<input id="mute" placeholder="Mute message">
+<input id="ban" placeholder="Ban message">
+<input id="kick" placeholder="Kick message">
 </div>
 
 <div class="card">
-<h2>📢 Announcement</h2>
+<h2>Announcement</h2>
 <input id="channel" placeholder="Channel ID">
-<textarea id="message" placeholder="Message"></textarea>
-<button onclick="sendAnn()">Send</button>
+<textarea id="message"></textarea>
+<button onclick="send()">Send</button>
 </div>
 
-<button onclick="save()">Save Settings</button>
+<button onclick="save()">Save</button>
 
 </div>
 
 <script>
+
 async function save(){
     await fetch("/api/save",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-            guild:document.getElementById("guild").value,
+            guild:guild.value,
             warn:warn.value,
             mute:mute.value,
             ban:ban.value,
@@ -227,19 +200,26 @@ async function save(){
     alert("Saved");
 }
 
-async function sendAnn(){
-    await fetch("/api/announce",{
+async function send(){
+    const res = await fetch("/api/announce",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-            guild:document.getElementById("guild").value,
+            guild:guild.value,
             channel:channel.value,
             message:message.value
         })
     });
 
-    alert("Sent");
+    const data = await res.json();
+
+    if(!data.ok){
+        alert("Error: " + JSON.stringify(data.error));
+    } else {
+        alert("Sent successfully");
+    }
 }
+
 </script>
 
 </body>
@@ -248,7 +228,7 @@ async function sendAnn(){
 });
 
 /* =========================
-   SAVE MOD SETTINGS
+   SAVE SETTINGS
 ========================= */
 
 app.post("/api/save", (req, res) => {
@@ -267,26 +247,38 @@ app.post("/api/save", (req, res) => {
 });
 
 /* =========================
-   ANNOUNCEMENTS
+   ANNOUNCEMENTS (REAL CHECK)
 ========================= */
 
 app.post("/api/announce", async (req, res) => {
     try {
-        await fetch(`https://discord.com/api/v10/channels/${req.body.channel}/messages`, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bot ${TOKEN}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                content: req.body.message
-            })
-        });
+        const response = await fetch(
+            `https://discord.com/api/v10/channels/${req.body.channel}/messages`,
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bot ${TOKEN}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    content: req.body.message
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        console.log("DISCORD RESPONSE:", data);
+
+        if (!response.ok) {
+            return res.json({ ok: false, error: data });
+        }
 
         res.json({ ok: true });
-    } catch (e) {
-        console.log(e);
-        res.json({ ok: false });
+
+    } catch (err) {
+        console.log("ANNOUNCE ERROR:", err);
+        res.json({ ok: false, error: err.toString() });
     }
 });
 

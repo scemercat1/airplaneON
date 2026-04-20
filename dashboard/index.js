@@ -78,9 +78,7 @@ app.get("/callback", async (req, res) => {
             }
         });
 
-        const guilds = await guildsRes.json();
-
-        req.session.guilds = guilds;
+        req.session.guilds = await guildsRes.json();
 
         res.redirect("/dashboard");
     } catch (e) {
@@ -90,7 +88,7 @@ app.get("/callback", async (req, res) => {
 });
 
 /* =========================
-   🌐 DASHBOARD UI
+   🌐 DASHBOARD
 ========================= */
 
 app.get("/dashboard", (req, res) => {
@@ -106,39 +104,13 @@ app.get("/dashboard", (req, res) => {
 <head>
 <title>Aircraft Dashboard</title>
 <style>
-body {
-    margin:0;
-    font-family: Arial;
-    background:#0f0f0f;
-    color:white;
-}
-.container {
-    padding:20px;
-}
-.card {
-    background:#1a1a1a;
-    padding:20px;
-    border-radius:12px;
-    margin-bottom:20px;
-}
-select, input {
-    padding:10px;
-    margin:5px;
-    width:100%;
-    border-radius:8px;
-    border:none;
-}
-button {
-    padding:10px;
-    background:#5865F2;
-    border:none;
-    color:white;
-    border-radius:8px;
-    cursor:pointer;
-}
-button:hover {
-    background:#4752c4;
-}
+body {background:#0f0f0f;color:white;font-family:Arial;margin:0}
+.container{padding:20px}
+.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
+input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none}
+button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
+button:hover{background:#4752c4}
+h2{margin-top:0}
 </style>
 </head>
 <body>
@@ -148,43 +120,75 @@ button:hover {
 <h1>🔥 Aircraft Dashboard</h1>
 
 <div class="card">
-<h3>🔥 Select Server Discord</h3>
-<select id="guild">
-${guildOptions}
-</select>
+<h2>🔥 Select Server</h2>
+<select id="guild">${guildOptions}</select>
 </div>
 
 <div class="card">
-<h3>🔥 Roles (IDs separated by space)</h3>
-<input id="roles" placeholder="roleID1 roleID2 roleID3">
+<h2>🛡 Moderation Messages</h2>
+
+<label>Warn Message</label>
+<input id="warn" placeholder="You were warned for {reason}">
+
+<label>Mute Message</label>
+<input id="mute" placeholder="You were muted for {reason}">
+
+<label>Ban Message</label>
+<input id="ban" placeholder="You were banned for {reason}">
+
+<label>Kick Message</label>
+<input id="kick" placeholder="You were kicked for {reason}">
 </div>
 
 <div class="card">
-<h3>🔥 Logs Channel ID</h3>
-<input id="logs" placeholder="channel ID">
+<h2>📢 Announcement</h2>
+
+<label>Channel ID</label>
+<input id="ann_channel" placeholder="channel id">
+
+<label>Message</label>
+<textarea id="ann_msg" placeholder="announcement text"></textarea>
+
+<button onclick="sendAnn()">Send Announcement</button>
 </div>
 
-<button onclick="save()">Save Config</button>
+<button onclick="save()">💾 Save Settings</button>
 
 </div>
 
 <script>
-async function save() {
-    const guild = document.getElementById("guild").value;
-    const roles = document.getElementById("roles").value.split(" ");
-    const logs = document.getElementById("logs").value;
+async function save(){
+    const guild=document.getElementById("guild").value;
 
-    await fetch("/api/save", {
+    await fetch("/api/save",{
         method:"POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
             guild,
-            roles,
-            logs
+            warn:document.getElementById("warn").value,
+            mute:document.getElementById("mute").value,
+            ban:document.getElementById("ban").value,
+            kick:document.getElementById("kick").value
         })
     });
 
     alert("Saved!");
+}
+
+async function sendAnn(){
+    const guild=document.getElementById("guild").value;
+
+    await fetch("/api/announce",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+            guild,
+            channel:document.getElementById("ann_channel").value,
+            message:document.getElementById("ann_msg").value
+        })
+    });
+
+    alert("Sent!");
 }
 </script>
 
@@ -194,26 +198,49 @@ async function save() {
 });
 
 /* =========================
-   💾 SAVE CONFIG
+   💾 SAVE MOD SETTINGS
 ========================= */
 
 app.post("/api/save", (req, res) => {
-    const config = read("config.json");
-    const logs = read("logs.json");
+    const mod = read("mod_messages.json");
 
-    const { guild, roles, logs: logChannel } = req.body;
+    const { guild, warn, mute, ban, kick } = req.body;
 
-    config[guild] = roles;
-    logs[guild] = logChannel;
+    mod[guild] = { warn, mute, ban, kick };
 
-    write("config.json", config);
-    write("logs.json", logs);
+    write("mod_messages.json", mod);
 
     res.json({ ok: true });
 });
 
 /* =========================
-   🚀 SERVER START
+   📢 ANNOUNCEMENTS
+========================= */
+
+app.post("/api/announce", async (req, res) => {
+    const { guild, channel, message } = req.body;
+
+    try {
+        await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                content: message
+            })
+        });
+
+        res.json({ ok: true });
+    } catch (e) {
+        console.log(e);
+        res.json({ ok: false });
+    }
+});
+
+/* =========================
+   🚀 START
 ========================= */
 
 const PORT = process.env.PORT;

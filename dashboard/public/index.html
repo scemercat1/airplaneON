@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h1>Dashboard</h1>
+
+<button onclick="login()">Login</button>
+<div id="guilds"></div>
+
+<script>
+function login() {
+    location = "/login";
+}
+
+fetch("/api/guilds").then(r=>r.json()).then(g=>{
+    g.forEach(x=>{
+        let b=document.createElement("button");
+        b.innerText=x.name;
+        document.body.appendChild(b);
+    })
+});
+</script>
+
+</body>
+</html>

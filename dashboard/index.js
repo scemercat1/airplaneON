@@ -2,7 +2,6 @@ const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
 const Strategy = require("passport-discord").Strategy;
-const fetch = require("node-fetch");
 const fs = require("fs");
 
 const config = require("./config");
@@ -27,7 +26,7 @@ passport.deserializeUser((obj, done) => done(null, obj));
 passport.use(new Strategy({
     clientID: config.id,
     clientSecret: config.clientSecret,
-    callbackURL: `${config.domain}/callback`,
+    callbackURL: config.redirect,
     scope: ["identify", "guilds"]
 }, (accessToken, refreshToken, profile, done) => {
     process.nextTick(() => done(null, profile));
@@ -36,7 +35,7 @@ passport.use(new Strategy({
 /* ================= MIDDLEWARE ================= */
 
 app.use(session({
-    secret: "dash_secret",
+    secret: "secret",
     resave: false,
     saveUninitialized: false
 }));
@@ -52,17 +51,21 @@ app.get("/login", passport.authenticate("discord"));
 
 app.get("/callback",
     passport.authenticate("discord", { failureRedirect: "/" }),
-    (req, res) => res.redirect("/dashboard")
+    (req, res) => {
+        res.redirect("/dashboard");
+    }
 );
 
 /* ================= DASHBOARD ================= */
 
-app.get("/dashboard", async (req, res) => {
+app.get("/dashboard", (req, res) => {
     if (!req.user) return res.redirect("/login");
 
-    const botGuilds = getBotGuilds().map(String);
+    const botGuilds = getBotGuilds();
 
-    const ownerGuilds = req.user.guilds.filter(g => g.owner === true);
+    const userGuilds = req.user.guilds || [];
+
+    const ownerGuilds = userGuilds.filter(g => g.owner === true);
 
     const guilds = ownerGuilds.filter(g =>
         botGuilds.includes(String(g.id))
@@ -71,8 +74,12 @@ app.get("/dashboard", async (req, res) => {
     let html = `
     <body style="background:#0f0f0f;color:white;font-family:Arial">
         <h1>Dashboard</h1>
+
         <a href="https://discord.com/oauth2/authorize?client_id=${config.id}&permissions=8&scope=bot"
-           style="color:#5865F2">Invite Bot</a>
+           style="color:#5865F2">
+           Invite Bot
+        </a>
+
         <div>
     `;
 
@@ -98,8 +105,9 @@ app.get("/dashboard", async (req, res) => {
 app.get("/dashboard/:id", (req, res) => {
     res.send(`
         <body style="background:#0f0f0f;color:white;font-family:Arial">
-            <h1>Server Config</h1>
+            <h1>Server Settings</h1>
             <p>Guild ID: ${req.params.id}</p>
+
             <a href="/dashboard" style="color:#5865F2">Back</a>
         </body>
     `);

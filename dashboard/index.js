@@ -19,7 +19,16 @@ init();
 
 app.use(express.json());
 
-// 🔥 Serve your static homepage from the specific folder
+// ==========================================
+//          HOMEPAGE & STATIC FILES
+// ==========================================
+
+// 🔥 This ensures the root "/" actually sends your index.html file
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "dashboard", "public", "index.html"));
+});
+
+// Serve your static homepage assets from the specific folder
 app.use(express.static(path.join(__dirname, "dashboard", "public")));
 
 app.use(session({ secret: "aircraft-dashboard", resave: false, saveUninitialized: false }));
@@ -292,7 +301,7 @@ function renderServerConfig(guild, settings) {
 }
 
 // ==========================================
-//                 START
+//                  START
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0");

@@ -1,195 +1,207 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
-import os, asyncio, random, uuid
-from datetime import datetime, timedelta
-from pymongo import MongoClient
+const express = require("express");
+const session = require("express-session");
+const { MongoClient } = require("mongodb");
+const fetch = require("node-fetch");
+const path = require("path");
 
-# MongoDB Setup
-MONGO_URL = os.getenv("MONGO_URL")
-mongo_client = MongoClient(MONGO_URL)
-db = mongo_client["aircraft_db"]
+const app = express();
+const client = new MongoClient(process.env.MONGO_URL);
+let settings_col, guilds_col;
 
-# Collections
-settings_col = db["settings"]
-guilds_col = db["bot_presence"]
-counting_col = db["counting"]
-giveaways_col = db["giveaways"]
-config_col = db["config"]
-logs_col = db["logs"]
+async function init() {
+    await client.connect();
+    const db = client.db("aircraft_db");
+    settings_col = db.collection("settings");
+    guilds_col = db.collection("bot_presence");
+    console.log("Connected to MongoDB");
+}
+init();
 
-last_user = {}
+app.use(express.json());
 
-def get_db_data(collection, filter_id):
-    res = collection.find_one({"_id": str(filter_id)})
-    return res["data"] if res else {}
+// ==========================================
+//          HOMEPAGE & STATIC FILES
+// ==========================================
 
-def save_db_data(collection, filter_id, data):
-    collection.update_one({"_id": str(filter_id)}, {"$set": {"data": data}}, upsert=True)
+// Serve static assets from the nested folder and the standard root public folder
+app.use(express.static(path.join(__dirname, "dashboard", "public")));
+app.use(express.static("public")); 
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+// Explicit homepage route
+app.get("/", (req, res) => {
+    // Tries to send the dashboard index, falls back to a simple string if not found
+    const indexPath = path.join(__dirname, "dashboard", "public", "index.html");
+    if (require('fs').existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.send("Dashboard running");
+    }
+});
 
-# Permissions
-def is_mod(interaction):
-    data = get_db_data(config_col, interaction.guild.id)
-    roles = [int(r) for r in data] if isinstance(data, list) else []
-    return any(r.id in roles for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
+// Health check endpoint from your old example
+app.get("/health", (req, res) => {
+    res.send("OK");
+});
 
-def is_owner(interaction):
-    return interaction.user.id == interaction.guild.owner_id
+app.use(session({ secret: "aircraft-dashboard", resave: false, saveUninitialized: false }));
 
-async def send_log(guild, embed):
-    log_data = get_db_data(logs_col, guild.id)
-    if log_data:
-        ch = guild.get_channel(int(log_data))
-        if ch: await ch.send(embed=embed)
+// ==========================================
+//               OAUTH2 & LOGIN
+// ==========================================
+app.get("/login", (req, res) => {
+    const url = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.REDIRECT)}&response_type=code&scope=identify%20guilds`;
+    res.redirect(url);
+});
 
-def dm_embed(title, desc, color):
-    return discord.Embed(title=title, description=desc, color=color)
+app.get("/callback", async (req, res) => {
+    const code = req.query.code;
+    if (!code) return res.send("No code");
 
-@bot.event
-async def on_ready():
-    guild_ids = [str(g.id) for g in bot.guilds]
-    guilds_col.update_one({"_id": "bot_stats"}, {"$set": {"active_guilds": guild_ids}}, upsert=True)
-    await bot.tree.sync()
-    bot.loop.create_task(check_giveaways())
-    print(f"Logged in as {bot.user}")
+    const params = new URLSearchParams({
+        client_id: process.env.CLIENT_ID,
+        client_secret: process.env.CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: process.env.REDIRECT
+    });
 
-# ---------------- MODERATION ----------------
+    const tokenRes = await fetch("https://discord.com/api/oauth2/token", { method: "POST", body: params, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    const tokenData = await tokenRes.json();
 
-@bot.tree.command(name="ban")
-@app_commands.describe(member="Member to ban", reason="Reason for ban")
-async def ban(interaction, member: discord.Member, reason: str):
-    if not is_mod(interaction): return await interaction.response.send_message("No perms.", ephemeral=True)
-    await member.ban(reason=reason)
-    await send_log(interaction.guild, discord.Embed(title="Ban", description=f"{member} banned by {interaction.user}\nReason: {reason}", color=discord.Color.red()))
-    await interaction.response.send_message(f"Banned {member.display_name}.")
+    if (tokenData.error) return res.send(`Auth Error: ${tokenData.error_description}`);
 
-@bot.tree.command(name="mute")
-async def mute(interaction, member: discord.Member, minutes: int, reason: str):
-    if not is_mod(interaction): return
-    await member.timeout(timedelta(minutes=minutes), reason=reason)
-    await interaction.response.send_message(f"Muted {member.display_name} for {minutes}m.")
+    const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+    const userGuilds = await guildsRes.json();
 
-@bot.tree.command(name="clear")
-async def clear(interaction, amount: int):
-    if not is_mod(interaction): return
-    await interaction.channel.purge(limit=amount)
-    await interaction.response.send_message(f"Cleared {amount} messages.", ephemeral=True)
+    const botData = await guilds_col.findOne({ _id: "bot_stats" });
+    const botGuildIds = botData ? botData.active_guilds : [];
 
-@bot.tree.command(name="slowdown")
-async def slowdown(interaction, seconds: int):
-    if not is_mod(interaction): return
-    await interaction.channel.edit(slowmode_delay=seconds)
-    await interaction.response.send_message(f"Slowmode set to {seconds}s.")
+    const finalGuilds = userGuilds.filter(g => {
+        const isAdmin = (BigInt(g.permissions) & 0x8n) === 0x8n || (BigInt(g.permissions) & 0x20n) === 0x20n;
+        return isAdmin && botGuildIds.includes(g.id);
+    });
 
-@bot.tree.command(name="lock")
-async def lock(interaction):
-    if not is_mod(interaction): return
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-    await interaction.response.send_message("Channel locked. 🔒")
+    req.session.token = tokenData.access_token;
+    req.session.guilds = finalGuilds;
+    res.redirect("/dashboard");
+});
 
-@bot.tree.command(name="unlock")
-async def unlock(interaction):
-    if not is_mod(interaction): return
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-    await interaction.response.send_message("Channel unlocked. 🔓")
+// ==========================================
+//           DASHBOARD ROUTING
+// ==========================================
+app.get("/dashboard", (req, res) => {
+    if (!req.session.guilds) return res.redirect("/login");
+    res.send(renderServerList(req.session.guilds));
+});
 
-# ---------------- COUNTING ----------------
-
-@bot.tree.command(name="countchannel")
-async def countchannel(interaction, channel: discord.TextChannel, start: int):
-    if not is_mod(interaction): return
-    counting_col.update_one({"_id": str(channel.id)}, {"$set": {"count": start}}, upsert=True)
-    await interaction.response.send_message(f"Counting started in {channel.mention} at {start}!")
-
-@bot.event
-async def on_message(message):
-    if message.author.bot: return
+app.get("/dashboard/:guildId", async (req, res) => {
+    if (!req.session.guilds) return res.redirect("/login");
     
-    count_data = counting_col.find_one({"_id": str(message.channel.id)})
-    if count_data:
-        expected = count_data["count"] + 1
+    const guildId = req.params.guildId;
+    const guild = req.session.guilds.find(g => g.id === guildId);
+    if (!guild) return res.status(403).send("Forbidden: You do not own this server.");
+
+    const settings = await settings_col.findOne({ guild_id: guildId }) || {};
+    res.send(renderServerConfig(guild, settings));
+});
+
+// ==========================================
+//                API ACTIONS
+// ==========================================
+app.post("/api/save", async (req, res) => {
+    const { guild, warn, kick } = req.body;
+    await settings_col.updateOne({ guild_id: guild }, { $set: { warn, kick } }, { upsert: true });
+    res.json({ ok: true });
+});
+
+app.post("/api/announce", async (req, res) => {
+    const { channel, message } = req.body;
+    try {
+        const discordRes = await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bot ${process.env.DISCORD_TOKEN}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ content: message })
+        });
         
-        # Check for same user
-        if last_user.get(str(message.channel.id)) == message.author.id:
-            await message.delete()
-            return
+        const data = await discordRes.json();
+        if (discordRes.ok) {
+            res.json({ ok: true });
+        } else {
+            res.json({ ok: false, error: data });
+        }
+    } catch (e) {
+        res.json({ ok: false, error: "Internal Error" });
+    }
+});
 
-        # Wrong number or not a number
-        if not message.content.isdigit() or int(message.content) != expected:
-            await message.delete()
-            try:
-                await message.author.timeout(timedelta(minutes=10), reason="Failed counting")
-                await message.channel.send(f"❌ {message.author.mention} failed! The count was {expected-1}. 10m Mute.", delete_after=5)
-            except: pass
-            counting_col.update_one({"_id": str(message.channel.id)}, {"$set": {"count": 0}})
-            return
+// ==========================================
+//              HTML RENDERERS
+// ==========================================
+const BASE_STYLE = `
+<style>
+    body { background: #0f0f0f; color: white; font-family: 'Segoe UI', sans-serif; padding: 20px; margin: 0; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { text-align: center; color: #5865F2; }
+    .server-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; padding: 20px 0; }
+    .server-card { background: #1a1a1a; padding: 20px; border-radius: 12px; text-align: center; text-decoration: none; color: white; display: block; border: 2px solid transparent; transition: 0.2s; }
+    .server-card:hover { transform: translateY(-5px); background: #2a2a2a; border-color: #5865F2; }
+    .server-icon { width: 80px; height: 80px; border-radius: 50%; background: #2a2a2a; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; overflow: hidden;}
+    .server-icon img { width: 100%; height: 100%; object-fit: cover; }
+    .panels { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+    .card { background: #1a1a1a; padding: 25px; border-radius: 12px; }
+    input, textarea { width: 100%; padding: 12px; margin-top: 5px; background: #2a2a2a; color: white; border: 1px solid #333; border-radius: 6px; box-sizing: border-box; }
+    button { padding: 12px 24px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; background: #5865F2; color: white; }
+</style>
+`;
 
-        # Correct Number - Webhook Logic
-        await message.delete()
-        last_user[str(message.channel.id)] = message.author.id
-        counting_col.update_one({"_id": str(message.channel.id)}, {"$set": {"count": expected}})
+function getIconUrl(guild) {
+    return guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : null;
+}
 
-        # Send as Webhook
-        webhooks = await message.channel.webhooks()
-        webhook = discord.utils.get(webhooks, name="Aircraft Counting")
-        if not webhook:
-            webhook = await message.channel.create_webhook(name="Aircraft Counting")
-        
-        await webhook.send(
-            content=message.content, 
-            username=message.author.display_name, 
-            avatar_url=message.author.display_avatar.url
-        )
-        return # Avoid processing commands if it's counting
+function renderServerList(guilds) {
+    const cards = guilds.map(g => {
+        const icon = getIconUrl(g);
+        return `<a href="/dashboard/${g.id}" class="server-card"><div class="server-icon">${icon ? `<img src="${icon}">` : g.name[0]}</div><div class="server-name">${g.name}</div></a>`;
+    }).join("");
+    return `<html><head><title>Dashboard</title>${BASE_STYLE}</head><body><div class="container"><h1>🔥 Aircraft Dashboard</h1><div class="server-grid">${cards}</div></div></body></html>`;
+}
 
-    await bot.process_commands(message)
+function renderServerConfig(guild, settings) {
+    return `<html><head><title>${guild.name}</title>${BASE_STYLE}</head><body>
+    <div class="container">
+        <h2>Configuring ${guild.name}</h2>
+        <div class="panels">
+            <div class="card">
+                <h3>Moderation</h3>
+                <label>Warn Message</label><input id="warn" value="${settings.warn || ''}">
+                <label>Kick Message</label><input id="kick" value="${settings.kick || ''}">
+                <button onclick="save()">Save</button>
+            </div>
+            <div class="card">
+                <h3>Announce</h3>
+                <input id="ch" placeholder="Channel ID"><textarea id="msg"></textarea>
+                <button style="background:#2ecc71" onclick="ann()">Send</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        async function save(){
+            await fetch("/api/save", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({guild:"${guild.id}", warn:document.getElementById("warn").value, kick:document.getElementById("kick").value})});
+            alert("Saved");
+        }
+        async function ann(){
+            const res = await fetch("/api/announce", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({channel:document.getElementById("ch").value, message:document.getElementById("msg").value})});
+            const data = await res.json();
+            alert(data.ok ? "Sent" : "Error");
+        }
+    </script>
+    </body></html>`;
+}
 
-# ---------------- GIVEAWAYS ----------------
-
-@bot.tree.command(name="giveawaystart")
-async def giveawaystart(interaction, name: str, prize: str, description: str, winners: int, time: str):
-    unit = time[-1]
-    val = int(time[:-1])
-    sec = val * {"s":1,"m":60,"h":3600,"d":86400}.get(unit, 60)
-    gid = str(uuid.uuid4())[:8]
-    end = datetime.utcnow().timestamp() + sec
-
-    embed = discord.Embed(title=f"🎉 {name}", description=f"{description}\n\nPrize: **{prize}**\nEnds: <t:{int(end)}:R>", color=discord.Color.green())
-    msg = await interaction.channel.send(embed=embed)
-    await msg.add_reaction("🎉")
-
-    giveaways_col.insert_one({"_id": gid, "channel": interaction.channel.id, "message": msg.id, "end": end, "winners": winners, "ended": False})
-    await interaction.response.send_message(f"Giveaway started! ID: {gid}", ephemeral=True)
-
-async def check_giveaways():
-    await bot.wait_until_ready()
-    while True:
-        now = datetime.utcnow().timestamp()
-        for g in giveaways_col.find({"ended": False, "end": {"$lte": now}}):
-            ch = bot.get_channel(g["channel"])
-            if ch:
-                try:
-                    msg = await ch.fetch_message(g["message"])
-                    users = [u async for u in msg.reactions[0].users() if not u.bot]
-                    if users:
-                        ws = random.sample(users, min(len(users), g["winners"]))
-                        await ch.send(f"🎉 Giveaway Finished! Winners: {', '.join([w.mention for w in ws])}")
-                    else:
-                        await ch.send("Giveaway ended with no participants.")
-                except: pass
-            giveaways_col.update_one({"_id": g["_id"]}, {"$set": {"ended": True}})
-        await asyncio.sleep(15)
-
-# ---------------- CONFIG ----------------
-
-@bot.tree.command(name="mods")
-async def mods(interaction, roles: str):
-    if not is_owner(interaction): return
-    ids = [int(r.strip("<@&>")) for r in roles.split()]
-    save_db_data(config_col, interaction.guild.id, ids)
-    await interaction.response.send_message("Mod roles updated.")
-
-bot.run(os.getenv("DISCORD_TOKEN"))
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => {
+    console.log("Running on", PORT);
+});

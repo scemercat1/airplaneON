@@ -1,43 +1,33 @@
 const express = require("express");
 const session = require("express-session");
+const { MongoClient } = require("mongodb");
 const fetch = require("node-fetch");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
+const MONGO_URL = process.env.MONGO_URL;
+const client = new MongoClient(MONGO_URL);
 
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REDIRECT = process.env.REDIRECT;
-const TOKEN = process.env.DISCORD_TOKEN;
-const DATA_PATH = "/data";
+let settings_col, guilds_col;
+
+async function initDB() {
+    await client.connect();
+    const db = client.db("aircraft_db");
+    settings_col = db.collection("settings");
+    guilds_col = db.collection("bot_presence");
+    console.log("Dashboard connected to MongoDB");
+}
+initDB();
 
 app.use(express.json());
 app.use(express.static("public"));
 app.use(session({
-    secret: "aircraft-dashboard",
+    secret: "aircraft-dashboard-secret",
     resave: false,
     saveUninitialized: false
 }));
 
-function read(file) {
-    try {
-        return JSON.parse(fs.readFileSync(path.join(DATA_PATH, file), "utf8"));
-    } catch {
-        return {};
-    }
-}
-
-function write(file, data) {
-    fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
-}
-
-app.get("/", (req, res) => {
-    res.send('<h1>Aircraft Dashboard</h1><a href="/login">Login with Discord</a>');
-});
-
 app.get("/login", (req, res) => {
-    const url = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT)}&response_type=code&scope=identify%20guilds`;
+    const url = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.REDIRECT)}&response_type=code&scope=identify%20guilds`;
     res.redirect(url);
 });
 
@@ -45,142 +35,93 @@ app.get("/callback", async (req, res) => {
     const code = req.query.code;
     if (!code) return res.send("No code");
 
-    try {
-        const params = new URLSearchParams();
-        params.append("client_id", CLIENT_ID);
-        params.append("client_secret", CLIENT_SECRET);
-        params.append("grant_type", "authorization_code");
-        params.append("code", code);
-        params.append("redirect_uri", REDIRECT);
+    const params = new URLSearchParams({
+        client_id: process.env.CLIENT_ID,
+        client_secret: process.env.CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: process.env.REDIRECT
+    });
 
-        const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
-            method: "POST",
-            body: params,
-            headers: { "Content-Type": "application/x-www-form-urlencoded" }
-        });
+    const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+        method: "POST",
+        body: params,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+    });
+    const tokenData = await tokenRes.json();
 
-        const tokenData = await tokenRes.json();
-        if (!tokenData.access_token) return res.send("Auth Error");
+    const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    const userGuilds = await guildsRes.json();
 
-        const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` }
-        });
+    const botData = await guilds_col.findOne({ _id: "bot_stats" });
+    const botGuildIds = botData ? botData.active_guilds : [];
 
-        const userGuilds = await guildsRes.json();
-        let botGuildIds = [];
-        try {
-            botGuildIds = JSON.parse(fs.readFileSync(path.join(DATA_PATH, "bot_guilds.json"), "utf8"));
-        } catch {
-            botGuildIds = [];
-        }
+    const finalGuilds = userGuilds.filter(g => {
+        const isAdmin = (BigInt(g.permissions) & 0x8n) === 0x8n || (BigInt(g.permissions) & 0x20n) === 0x20n;
+        return isAdmin && botGuildIds.includes(g.id);
+    });
 
-        const finalGuilds = userGuilds.filter(g => {
-            const hasPerms = (parseInt(g.permissions) & 0x8) === 0x8 || (parseInt(g.permissions) & 0x20) === 0x20;
-            return hasPerms && botGuildIds.includes(g.id);
-        });
-
-        req.session.guilds = finalGuilds;
-        res.redirect("/dashboard");
-    } catch (err) {
-        res.send("Error during callback");
-    }
+    req.session.guilds = finalGuilds;
+    res.redirect("/dashboard");
 });
 
 app.get("/dashboard", (req, res) => {
     if (!req.session.guilds) return res.redirect("/login");
 
-    const guildOptions = req.session.guilds
-        .map(g => `<option value="${g.id}">${g.name}</option>`)
-        .join("");
+    const options = req.session.guilds.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
 
     res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-<title>Aircraft Dashboard</title>
-<style>
-body {margin:0;font-family:Arial;background:#0f0f0f;color:white}
-.container{padding:20px}
-.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
-input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
-button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer;margin-top:10px}
-</style>
-</head>
-<body>
-<div class="container">
-<h1>🔥 Aircraft Dashboard</h1>
-<div class="card">
-<h2>Server</h2>
-<select id="guild">${guildOptions}</select>
-</div>
-<div class="card">
-<h2>Moderation Messages</h2>
-<input id="warn" placeholder="Warn {reason}">
-<input id="mute" placeholder="Mute {reason}">
-<input id="ban" placeholder="Ban {reason}">
-<input id="kick" placeholder="Kick {reason}">
-<button onclick="save()">Save Settings</button>
-</div>
-<div class="card">
-<h2>Announcement</h2>
-<input id="channel" placeholder="Channel ID">
-<textarea id="message" placeholder="Message"></textarea>
-<button onclick="sendAnn()">Send Announcement</button>
-</div>
-</div>
-<script>
-async function save(){
-    await fetch("/api/save",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-            guild:document.getElementById("guild").value,
-            warn:document.getElementById("warn").value,
-            mute:document.getElementById("mute").value,
-            ban:document.getElementById("ban").value,
-            kick:document.getElementById("kick").value
-        })
-    });
-    alert("Saved");
-}
-async function sendAnn(){
-    await fetch("/api/announce",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-            channel:document.getElementById("channel").value,
-            message:document.getElementById("message").value
-        })
-    });
-    alert("Sent");
-}
-</script>
-</body>
-</html>`);
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Aircraft Dashboard</title>
+            <style>
+                body { background: #0f0f0f; color: white; font-family: sans-serif; padding: 40px; }
+                .card { background: #1a1a1a; padding: 20px; border-radius: 10px; max-width: 500px; margin-bottom: 20px; }
+                input, select { width: 100%; padding: 10px; margin: 10px 0; background: #2a2a2a; color: white; border: none; border-radius: 5px; }
+                button { background: #5865F2; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <h1>Aircraft Dashboard</h1>
+            <div class="card">
+                <h3>Select Server</h3>
+                <select id="guild">${options}</select>
+            </div>
+            <div class="card">
+                <h3>Custom Mod Messages</h3>
+                <input id="warn" placeholder="Warn message {reason}">
+                <input id="kick" placeholder="Kick message {reason}">
+                <button onclick="save()">Save to Cloud</button>
+            </div>
+            <script>
+                async function save() {
+                    const res = await fetch("/api/save", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            guild: document.getElementById("guild").value,
+                            warn: document.getElementById("warn").value,
+                            kick: document.getElementById("kick").value
+                        })
+                    });
+                    if(res.ok) alert("Settings Synced to MongoDB!");
+                }
+            </script>
+        </body>
+        </html>
+    `);
 });
 
-app.post("/api/save", (req, res) => {
-    const mod = read("mod_messages.json");
-    mod[req.body.guild] = req.body;
-    write("mod_messages.json", mod);
+app.post("/api/save", async (req, res) => {
+    await settings_col.updateOne(
+        { guild_id: req.body.guild },
+        { $set: { warn: req.body.warn, kick: req.body.kick } },
+        { upsert: true }
+    );
     res.json({ ok: true });
 });
 
-app.post("/api/announce", async (req, res) => {
-    try {
-        await fetch(`https://discord.com/api/v10/channels/${req.body.channel}/messages`, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bot ${TOKEN}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ content: req.body.message })
-        });
-        res.json({ ok: true });
-    } catch {
-        res.json({ ok: false });
-    }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0");
+app.listen(process.env.PORT || 3000);

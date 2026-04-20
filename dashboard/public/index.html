@@ -1,25 +1,124 @@
 <!DOCTYPE html>
-<html>
-<body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Aircraft Dashboard</title>
 
-<h1>Dashboard</h1>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 
-<button onclick="login()">Login</button>
-<div id="guilds"></div>
-
-<script>
-function login() {
-    location = "/login";
+body {
+    margin: 0;
+    font-family: Inter, sans-serif;
+    color: white;
+    overflow: hidden;
+    background: #0b0b0f;
 }
 
-fetch("/api/guilds").then(r=>r.json()).then(g=>{
-    g.forEach(x=>{
-        let b=document.createElement("button");
-        b.innerText=x.name;
-        document.body.appendChild(b);
-    })
-});
-</script>
+/* 🌌 Animated background */
+.background {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at 20% 20%, #5865F2 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, #ff4ecd 0%, transparent 40%),
+                radial-gradient(circle at 50% 50%, #00ffc8 0%, transparent 50%);
+    filter: blur(80px);
+    animation: move 10s infinite alternate;
+}
+
+@keyframes move {
+    0% { transform: scale(1) translate(0px,0px); }
+    100% { transform: scale(1.2) translate(50px,-30px); }
+}
+
+/* 🧊 Main container */
+.container {
+    position: relative;
+    z-index: 2;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* 📦 Card */
+.card {
+    background: rgba(20,20,30,0.7);
+    backdrop-filter: blur(10px);
+    padding: 30px;
+    border-radius: 20px;
+    width: 400px;
+    box-shadow: 0 0 40px rgba(88,101,242,0.3);
+    animation: fadeIn 1s ease;
+}
+
+@keyframes fadeIn {
+    from {opacity: 0; transform: translateY(20px);}
+    to {opacity: 1; transform: translateY(0);}
+}
+
+h1 {
+    font-size: 32px;
+    margin-bottom: 10px;
+}
+
+p {
+    opacity: 0.7;
+    font-size: 14px;
+}
+
+/* 🔘 Button */
+button {
+    margin-top: 20px;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 10px;
+    background: #5865F2;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+button:hover {
+    transform: scale(1.05);
+    background: #4752c4;
+}
+
+/* 📱 mobile */
+@media (max-width: 500px) {
+    .card {width: 90%;}
+}
+</style>
+</head>
+
+<body>
+
+<div class="background"></div>
+
+<div class="container">
+
+    <div class="card">
+        <h1>🤖 Aircraft Bot</h1>
+        <p>
+            A powerful Discord moderation & management system.<br><br>
+
+            ✨ Moderation (warn / mute / ban / kick)<br>
+            📢 Announcements system<br>
+            🔥 Custom messages per action<br>
+            🧠 Role & log configuration<br>
+            ⚡ Live dashboard sync<br>
+        </p>
+
+        <a href="/login">
+            <button>Login with Discord</button>
+        </a>
+    </div>
+
+</div>
 
 </body>
 </html>

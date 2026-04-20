@@ -17,13 +17,13 @@ app.use(express.json());
 app.use(express.static("public"));
 
 app.use(session({
-    secret: "aircraft-dashboard-secret",
+    secret: "aircraft-secret",
     resave: false,
     saveUninitialized: false
 }));
 
 /* =========================
-   FILE HELPERS
+   HELPERS
 ========================= */
 
 function read(file) {
@@ -35,12 +35,16 @@ function read(file) {
 }
 
 function write(file, data) {
-    try {
-        fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
-    } catch (e) {
-        console.log("Write error:", e);
-    }
+    fs.writeFileSync(path.join(DATA_PATH, file), JSON.stringify(data, null, 2));
 }
+
+/* =========================
+   HOME
+========================= */
+
+app.get("/", (req, res) => {
+    res.send("Dashboard online");
+});
 
 /* =========================
    LOGIN
@@ -58,11 +62,13 @@ app.get("/login", (req, res) => {
 });
 
 /* =========================
-   CALLBACK + GUILD FILTER
+   CALLBACK (FIXED + DEBUG)
 ========================= */
 
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
+
+    if (!code) return res.send("❌ No code from Discord");
 
     try {
         const params = new URLSearchParams();
@@ -80,16 +86,28 @@ app.get("/callback", async (req, res) => {
             }
         });
 
-        const token = await tokenRes.json();
+        const tokenData = await tokenRes.json();
 
-        const userGuildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
+        // 🔥 DEBUG REAL ERROR
+        if (!tokenRes.ok) {
+            console.log("OAuth error:", tokenData);
+            return res.send("OAuth error: " + JSON.stringify(tokenData));
+        }
+
+        if (!tokenData.access_token) {
+            return res.send("❌ No access token received");
+        }
+
+        // 🔥 GET USER GUILDS
+        const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
             headers: {
-                Authorization: `Bearer ${token.access_token}`
+                Authorization: `Bearer ${tokenData.access_token}`
             }
         });
 
-        let userGuilds = await userGuildsRes.json();
+        const userGuilds = await guildsRes.json();
 
+        // 🔥 GET BOT GUILDS
         const botGuildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
             headers: {
                 Authorization: `Bot ${TOKEN}`
@@ -100,20 +118,21 @@ app.get("/callback", async (req, res) => {
 
         const botGuildIds = botGuilds.map(g => g.id);
 
-        // 🔥 FILTER: only mutual servers
-        userGuilds = userGuilds.filter(g => botGuildIds.includes(g.id));
+        // 🔥 FILTER MUTUAL SERVERS
+        const finalGuilds = userGuilds.filter(g => botGuildIds.includes(g.id));
 
-        req.session.guilds = userGuilds;
+        req.session.guilds = finalGuilds;
 
         res.redirect("/dashboard");
+
     } catch (err) {
         console.log(err);
-        res.send("OAuth failed");
+        res.send("OAuth exception");
     }
 });
 
 /* =========================
-   DASHBOARD UI
+   DASHBOARD PAGE
 ========================= */
 
 app.get("/dashboard", (req, res) => {
@@ -130,12 +149,11 @@ app.get("/dashboard", (req, res) => {
 <title>Aircraft Dashboard</title>
 <style>
 body {margin:0;font-family:Arial;background:#0f0f0f;color:white}
-.container {padding:20px}
-.card {background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
-input,select,textarea {width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
-button {padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
-button:hover {background:#4752c4}
-h2 {margin-top:0}
+.container{padding:20px}
+.card{background:#1a1a1a;padding:15px;margin:10px 0;border-radius:10px}
+input,select,textarea{width:100%;padding:8px;margin-top:5px;border-radius:6px;border:none;background:#2a2a2a;color:white}
+button{padding:10px;background:#5865F2;border:none;color:white;border-radius:6px;cursor:pointer}
+button:hover{background:#4752c4}
 </style>
 </head>
 <body>
@@ -145,51 +163,36 @@ h2 {margin-top:0}
 <h1>🔥 Aircraft Dashboard</h1>
 
 <div class="card">
-<h2>🔥 Server Select</h2>
+<h2>Server</h2>
 <select id="guild">${guildOptions}</select>
 </div>
 
 <div class="card">
-<h2>🛡 Moderation Messages</h2>
-
-<label>Warn</label>
-<input id="warn" placeholder="You were warned for {reason}">
-
-<label>Mute</label>
-<input id="mute" placeholder="You were muted for {reason}">
-
-<label>Ban</label>
-<input id="ban" placeholder="You were banned for {reason}">
-
-<label>Kick</label>
-<input id="kick" placeholder="You were kicked for {reason}">
+<h2>Moderation Messages</h2>
+<input id="warn" placeholder="Warn message {reason}">
+<input id="mute" placeholder="Mute message {reason}">
+<input id="ban" placeholder="Ban message {reason}">
+<input id="kick" placeholder="Kick message {reason}">
 </div>
 
 <div class="card">
-<h2>📢 Announcement</h2>
-
-<label>Channel ID</label>
-<input id="channel" placeholder="channel id">
-
-<label>Message</label>
-<textarea id="message" placeholder="announcement text"></textarea>
-
+<h2>Announcement</h2>
+<input id="channel" placeholder="Channel ID">
+<textarea id="message" placeholder="Message"></textarea>
 <button onclick="sendAnn()">Send</button>
 </div>
 
-<button onclick="save()">💾 Save</button>
+<button onclick="save()">Save</button>
 
 </div>
 
 <script>
 async function save(){
-    const guild=document.getElementById("guild").value;
-
     await fetch("/api/save",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-            guild,
+            guild:document.getElementById("guild").value,
             warn:warn.value,
             mute:mute.value,
             ban:ban.value,
@@ -206,8 +209,8 @@ async function sendAnn(){
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
             guild:document.getElementById("guild").value,
-            channel:document.getElementById("channel").value,
-            message:document.getElementById("message").value
+            channel:channel.value,
+            message:message.value
         })
     });
 
@@ -221,7 +224,7 @@ async function sendAnn(){
 });
 
 /* =========================
-   SAVE MOD SETTINGS
+   SAVE CONFIG
 ========================= */
 
 app.post("/api/save", (req, res) => {
@@ -264,7 +267,7 @@ app.post("/api/announce", async (req, res) => {
 });
 
 /* =========================
-   START SERVER
+   START
 ========================= */
 
 const PORT = process.env.PORT;

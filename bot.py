@@ -44,6 +44,15 @@ def dm_embed(title, desc, color):
 
 @bot.event
 async def on_ready():
+    guild_ids = [str(g.id) for g in bot.guilds]
+
+    with open("/data/bot_guilds.json", "w") as f:
+        json.dump(guild_ids, f)
+
+    print("Guild cache updated")
+
+@bot.event
+async def on_ready():
     try:
         await bot.tree.sync()
         print("Slash commands synced")

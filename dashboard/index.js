@@ -20,15 +20,15 @@ init();
 app.use(express.json());
 
 // ==========================================
-//          HOMEPAGE & STATIC FILES
+//          HOMEPAGE & STATIC FIX
 // ==========================================
 
-// 🔥 This ensures the root "/" actually sends your index.html file
+// This specifically fixes the "Not Found" error for the main site
 app.get("/", (req, res) => {
     res.sendFile(path.join(__dirname, "dashboard", "public", "index.html"));
 });
 
-// Serve your static homepage assets from the specific folder
+// This serves your CSS and other files in that folder
 app.use(express.static(path.join(__dirname, "dashboard", "public")));
 
 app.use(session({ secret: "aircraft-dashboard", resave: false, saveUninitialized: false }));
@@ -69,7 +69,6 @@ app.get("/callback", async (req, res) => {
         return isAdmin && botGuildIds.includes(g.id);
     });
 
-    // Store token too, we'll need it for announcements
     req.session.token = tokenData.access_token;
     req.session.guilds = finalGuilds;
     res.redirect("/dashboard");
@@ -80,23 +79,17 @@ app.get("/callback", async (req, res) => {
 // ==========================================
 app.get("/dashboard", (req, res) => {
     if (!req.session.guilds) return res.redirect("/login");
-    
-    // 🔥 Show the Server List Page
     res.send(renderServerList(req.session.guilds));
 });
 
 app.get("/dashboard/:guildId", async (req, res) => {
     if (!req.session.guilds) return res.redirect("/login");
     
-    // Verify user owns this specific guild
     const guildId = req.params.guildId;
     const guild = req.session.guilds.find(g => g.id === guildId);
     if (!guild) return res.status(403).send("Forbidden: You do not own this server.");
 
-    // Fetch existing settings from DB
     const settings = await settings_col.findOne({ guild_id: guildId }) || {};
-
-    // 🔥 Show the Configuration Page for this server
     res.send(renderServerConfig(guild, settings));
 });
 
@@ -105,15 +98,12 @@ app.get("/dashboard/:guildId", async (req, res) => {
 // ==========================================
 app.post("/api/save", async (req, res) => {
     const { guild, warn, kick } = req.body;
-    // Basic security: ensure user owns this guild (could add session check here)
     await settings_col.updateOne({ guild_id: guild }, { $set: { warn, kick } }, { upsert: true });
     res.json({ ok: true });
 });
 
 app.post("/api/announce", async (req, res) => {
     const { channel, message } = req.body;
-    
-    // Use the stored BOT_TOKEN to send the message
     try {
         const discordRes = await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
             method: "POST",
@@ -143,22 +133,17 @@ const BASE_STYLE = `
     body { background: #0f0f0f; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; margin: 0; }
     .container { max-width: 1000px; margin: 0 auto; }
     h1 { text-align: center; color: #5865F2; }
-    
-    /* Server List Styling */
     .server-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; padding: 20px 0; }
     .server-card { background: #1a1a1a; padding: 20px; border-radius: 12px; text-align: center; cursor: pointer; transition: transform 0.2s, background 0.2s; border: 2px solid transparent; text-decoration: none; color: white; display: block; }
     .server-card:hover { transform: translateY(-5px); background: #2a2a2a; border-color: #5865F2; }
     .server-icon { width: 80px; height: 80px; border-radius: 50%; background: #2a2a2a; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: bold; color: #aaa; overflow: hidden;}
     .server-icon img { width: 100%; height: 100%; object-fit: cover; }
     .server-name { font-weight: bold; font-size: 1.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    /* Config Page Styling */
     .header-bar { display: flex; align-items: center; justify-content: space-between; background: #1a1a1a; padding: 15px 30px; border-radius: 12px; margin-bottom: 20px; }
     .back-btn { background: #333; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; text-decoration: none; font-size: 0.9em; }
     .current-server { display: flex; align-items: center; gap: 15px; }
     .current-icon { width: 40px; height: 40px; border-radius: 50%; background: #2a2a2a; overflow: hidden; display: flex; align-items: center; justify-content: center;}
     .current-icon img { width: 100%; height: 100%; object-fit: cover; }
-
     .panels { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
     .card { background: #1a1a1a; padding: 25px; border-radius: 12px; }
     h2 { border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
@@ -174,21 +159,15 @@ const BASE_STYLE = `
 </style>
 `;
 
-// Helper for Discord Icons
 function getIconUrl(guild) {
-    if (guild.icon) {
-        return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`;
-    }
-    // Fallback: Use initials
+    if (guild.icon) return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`;
     return null;
 }
 
-// 1. Page: Server List (YAGPDB Style)
 function renderServerList(guilds) {
     const cards = guilds.map(g => {
         const iconUrl = getIconUrl(g);
         const iconHtml = iconUrl ? `<img src="${iconUrl}" alt="${g.name}">` : g.name.charAt(0);
-        
         return `
             <a href="/dashboard/${g.id}" class="server-card">
                 <div class="server-icon">${iconHtml}</div>
@@ -196,26 +175,12 @@ function renderServerList(guilds) {
             </a>
         `;
     }).join("");
-
-    return `
-<!DOCTYPE html>
-<html>
-<head><title>Select Server | Aircraft</title>${BASE_STYLE}</head>
-<body>
-    <div class="container">
-        <h1>🔥 Aircraft Dashboard</h1>
-        <h2>Select a Server to Configure</h2>
-        <div class="server-grid">${cards}</div>
-    </div>
-</body>
-</html>`;
+    return `<!DOCTYPE html><html><head><title>Select Server | Aircraft</title>${BASE_STYLE}</head><body><div class="container"><h1>🔥 Aircraft Dashboard</h1><h2>Select a Server to Configure</h2><div class="server-grid">${cards}</div></div></body></html>`;
 }
 
-// 2. Page: Individual Server Configuration
 function renderServerConfig(guild, settings) {
     const iconUrl = getIconUrl(guild);
     const iconHtml = iconUrl ? `<img src="${iconUrl}">` : guild.name.charAt(0);
-
     return `
 <!DOCTYPE html>
 <html>
@@ -229,79 +194,40 @@ function renderServerConfig(guild, settings) {
             </div>
             <a href="/dashboard" class="back-btn">← Back to Servers</a>
         </div>
-
         <div class="panels">
             <div class="card">
                 <h2>Moderation Custom Messages</h2>
-                <p><small>Use <code>{reason}</code> to insert the reason from the slash command.</small></p>
-                
+                <p><small>Use <code>{reason}</code> to insert the reason.</small></p>
                 <label>Warn Message</label>
-                <input id="warn" placeholder="You were warned for {reason}" value="${settings.warn || ''}">
-                
+                <input id="warn" value="${settings.warn || ''}">
                 <label>Kick Message</label>
-                <input id="kick" placeholder="You were kicked for {reason}" value="${settings.kick || ''}">
-                
-                <div class="btn-group">
-                    <button class="btn-save" onclick="saveSettings()">Save Mod Settings</button>
-                </div>
+                <input id="kick" value="${settings.kick || ''}">
+                <div class="btn-group"><button class="btn-save" onclick="saveSettings()">Save Mod Settings</button></div>
             </div>
-
             <div class="card">
                 <h2>Send Announcement</h2>
                 <label>Channel ID</label>
-                <input id="annChannel" placeholder="123456789012345678">
-                
+                <input id="annChannel" placeholder="1234567890">
                 <label>Message</label>
-                <textarea id="annMsg" placeholder="Hello everyone!"></textarea>
-                
+                <textarea id="annMsg"></textarea>
                 <button class="btn-ann" onclick="sendAnn()">Send Announcement</button>
             </div>
         </div>
     </div>
-
     <script>
         const guildId = "${guild.id}";
-
         async function saveSettings() {
-            const res = await fetch("/api/save", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    guild: guildId,
-                    warn: document.getElementById("warn").value,
-                    kick: document.getElementById("kick").value
-                })
-            });
-            if(res.ok) alert("Mod settings updated!");
+            await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guild: guildId, warn: document.getElementById("warn").value, kick: document.getElementById("kick").value }) });
+            alert("Saved!");
         }
-
         async function sendAnn() {
-            const channel = document.getElementById("annChannel").value;
-            const message = document.getElementById("annMsg").value;
-            
-            if(!channel || !message) return alert("Please fill in both fields.");
-
-            const res = await fetch("/api/announce", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ channel, message })
-            });
+            const res = await fetch("/api/announce", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: document.getElementById("annChannel").value, message: document.getElementById("annMsg").value }) });
             const data = await res.json();
-            
-            if(data.ok) {
-                alert("Announcement sent successfully!");
-                document.getElementById("annMsg").value = ""; // Clear message box
-            } else {
-                alert("Failed to send: " + JSON.stringify(data.error));
-            }
+            if(data.ok) alert("Sent!"); else alert("Error: " + JSON.stringify(data.error));
         }
     </script>
-</body>
-</html>`;
+</body></html>`;
 }
 
-// ==========================================
-//                  START
-// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0");

@@ -17,13 +17,13 @@ app.use(express.json());
 app.use(express.static("public"));
 
 app.use(session({
-    secret: "aircraft-secret",
+    secret: "aircraft-dashboard",
     resave: false,
     saveUninitialized: false
 }));
 
 /* =========================
-   HELPERS
+   FILE SYSTEM
 ========================= */
 
 function read(file) {
@@ -43,7 +43,7 @@ function write(file, data) {
 ========================= */
 
 app.get("/", (req, res) => {
-    res.send("Dashboard online");
+    res.send("Dashboard running");
 });
 
 /* =========================
@@ -62,13 +62,13 @@ app.get("/login", (req, res) => {
 });
 
 /* =========================
-   CALLBACK (FIXED + DEBUG)
+   CALLBACK (FIXED)
 ========================= */
 
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
 
-    if (!code) return res.send("❌ No code from Discord");
+    if (!code) return res.send("No code");
 
     try {
         const params = new URLSearchParams();
@@ -88,37 +88,42 @@ app.get("/callback", async (req, res) => {
 
         const tokenData = await tokenRes.json();
 
-        // 🔥 DEBUG REAL ERROR
         if (!tokenRes.ok) {
             console.log("OAuth error:", tokenData);
             return res.send("OAuth error: " + JSON.stringify(tokenData));
         }
 
         if (!tokenData.access_token) {
-            return res.send("❌ No access token received");
+            return res.send("No access token");
         }
 
-        // 🔥 GET USER GUILDS
+        // 🔥 USER GUILDS
         const guildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
             headers: {
                 Authorization: `Bearer ${tokenData.access_token}`
             }
         });
 
-        const userGuilds = await guildsRes.json();
+        let userGuilds = await guildsRes.json();
 
-        // 🔥 GET BOT GUILDS
-        const botGuildsRes = await fetch("https://discord.com/api/users/@me/guilds", {
-            headers: {
-                Authorization: `Bot ${TOKEN}`
-            }
-        });
+        if (!Array.isArray(userGuilds)) {
+            return res.send("Guilds error");
+        }
 
-        const botGuilds = await botGuildsRes.json();
+        // 🔥 BOT GUILDS (SAFE METHOD VIA CACHE FILE)
+        let botGuildIds = [];
 
-        const botGuildIds = botGuilds.map(g => g.id);
+        try {
+            botGuildIds = JSON.parse(
+                fs.readFileSync(path.join(DATA_PATH, "bot_guilds.json"), "utf8")
+            );
+        } catch {
+            botGuildIds = [];
+        }
 
-        // 🔥 FILTER MUTUAL SERVERS
+        if (!Array.isArray(botGuildIds)) botGuildIds = [];
+
+        // 🔥 FILTER MUTUAL GUILDS
         const finalGuilds = userGuilds.filter(g => botGuildIds.includes(g.id));
 
         req.session.guilds = finalGuilds;
@@ -126,13 +131,13 @@ app.get("/callback", async (req, res) => {
         res.redirect("/dashboard");
 
     } catch (err) {
-        console.log(err);
-        res.send("OAuth exception");
+        console.log("OAuth exception:", err);
+        res.send("OAuth exception (check logs)");
     }
 });
 
 /* =========================
-   DASHBOARD PAGE
+   DASHBOARD
 ========================= */
 
 app.get("/dashboard", (req, res) => {
@@ -169,10 +174,10 @@ button:hover{background:#4752c4}
 
 <div class="card">
 <h2>Moderation Messages</h2>
-<input id="warn" placeholder="Warn message {reason}">
-<input id="mute" placeholder="Mute message {reason}">
-<input id="ban" placeholder="Ban message {reason}">
-<input id="kick" placeholder="Kick message {reason}">
+<input id="warn" placeholder="Warn {reason}">
+<input id="mute" placeholder="Mute {reason}">
+<input id="ban" placeholder="Ban {reason}">
+<input id="kick" placeholder="Kick {reason}">
 </div>
 
 <div class="card">
@@ -224,7 +229,7 @@ async function sendAnn(){
 });
 
 /* =========================
-   SAVE CONFIG
+   SAVE MOD SETTINGS
 ========================= */
 
 app.post("/api/save", (req, res) => {

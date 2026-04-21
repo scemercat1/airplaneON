@@ -59,11 +59,6 @@ class Moderation(commands.Cog):
     @app_commands.command(name="unlock")
     async def unlock(self, itx): await itx.channel.set_permissions(itx.guild.default_role, send_messages=True); await itx.response.send_message("Channel unlocked.")
 
-    @app_commands.command(name="nuke")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def nuke(self, itx):
-        new_ch = await itx.channel.clone(); await itx.channel.delete(); await new_ch.send("☢️ Channel Nuked.")
-
     # Other commands to include: unban, unmute, nick, role-add, role-remove, vmute, vdeafen, set-modlog, audit-search, softban, list-warns, clear-warns.
 
 async def setup(bot): await bot.add_cog(Moderation(bot))

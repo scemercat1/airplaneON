@@ -49,7 +49,25 @@ class Leveling(commands.Cog):
                     except:
                         pass
 
-    @app_commands.command(name="levelconfig")
+    @app_commands.command(name="rank", description="Check your current level and XP")
+    async def rank(self, interaction: discord.Interaction, member: discord.Member = None):
+        target = member or interaction.user
+        user_data = await self.db.find_one({"user": str(target.id), "guild": str(interaction.guild_id)})
+        
+        if not user_data:
+            return await interaction.response.send_message(f"{target.display_name} has no rank data yet.", ephemeral=True)
+
+        embed = discord.Embed(title=f"📊 Rank: {target.display_name}", color=0x3498db)
+        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="Level", value=user_data["lvl"], inline=True)
+        embed.add_field(name="Total XP", value=user_data["xp"], inline=True)
+        # Showing progress to next level
+        xp_next = user_data["lvl"] * 100
+        embed.set_footer(text=f"Progress: {user_data['xp'] % 100}/100 XP to next level")
+        
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="levelconfig", description="Set role rewards")
     @app_commands.describe(level="Level (1-200)", role="Role reward")
     @app_commands.checks.has_permissions(administrator=True)
     async def levelconfig(self, interaction: discord.Interaction, level: int, role: discord.Role):
@@ -63,7 +81,7 @@ class Leveling(commands.Cog):
         )
         await interaction.response.send_message(f"✅ Level {level} reward set to {role.mention}", ephemeral=True)
 
-    @app_commands.command(name="levelrewards")
+    @app_commands.command(name="levelrewards", description="Show all role rewards")
     async def levelrewards(self, interaction: discord.Interaction):
         config = await self.config_db.find_one({"guild_id": str(interaction.guild_id)})
         if not config or "rewards" not in config:

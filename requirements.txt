@@ -1,2 +1,4 @@
 discord.py
-pymongo
+motor
+dnspython
+node-fetch

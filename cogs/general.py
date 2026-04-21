@@ -9,8 +9,8 @@ class General(commands.Cog):
     @app_commands.command(name="help", description="Information about Aircraft Bot and setup guides")
     async def help(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="✈️ Aircraft Bot - Information Center", 
-            description="Aircraft is a high-performance bot designed for gaming and server management.",
+            title="✈️ Aircraft Games - Information Center", 
+            description="Aircraft Games is a high-performance bot designed for gaming and server management.",
             color=0x3498db
         )
         

@@ -7,7 +7,7 @@ class Leveling(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = self.bot.db["levels"]
-        self.config_db = self.bot.db["level_configs"] # Colectie noua pentru setari
+        self.config_db = self.bot.db["level_configs"]
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -28,8 +28,7 @@ class Leveling(commands.Cog):
             new_lvl = (new_xp // 100) + 1
             
             if new_lvl > user_data["lvl"]:
-                await message.channel.send(f"🎊 Felicitări {message.author.mention}, ai ajuns la **Nivelul {new_lvl}**!")
-                # Verificăm dacă există un rol premiu pentru noul nivel
+                await message.channel.send(f"🎊 Congrats {message.author.mention}, you reached **Level {new_lvl}**!")
                 await self.check_role_reward(message.author, message.guild, new_lvl)
             
             await self.db.update_one(
@@ -38,7 +37,6 @@ class Leveling(commands.Cog):
             )
 
     async def check_role_reward(self, member, guild, level):
-        """Funcție internă care acordă rolul dacă nivelul are un premiu setat"""
         config = await self.config_db.find_one({"guild_id": str(guild.id)})
         if config and "rewards" in config:
             role_id = config["rewards"].get(str(level))
@@ -47,48 +45,35 @@ class Leveling(commands.Cog):
                 if role and role not in member.roles:
                     try:
                         await member.add_roles(role)
-                        await member.send(f"🎖️ Ai primit rolul **{role.name}** pentru atingerea nivelului {level} în {guild.name}!")
+                        await member.send(f"🎖️ You've been granted the **{role.name}** role for hitting Level {level} in {guild.name}!")
                     except:
                         pass
 
-    @app_commands.command(name="levelconfig", description="Setează roluri premiu pentru anumite nivele")
-    @app_commands.describe(level="Nivelul la care se acordă rolul", role="Rolul care va fi acordat")
-    @app_commands.checks.has_permissions(administrator=True) # Doar adminii pot folosi
+    @app_commands.command(name="levelconfig")
+    @app_commands.describe(level="Level (1-200)", role="Role reward")
+    @app_commands.checks.has_permissions(administrator=True)
     async def levelconfig(self, interaction: discord.Interaction, level: int, role: discord.Role):
         if level < 1 or level > 200:
-            return await interaction.response.send_message("Nivelul trebuie să fie între 1 și 200.", ephemeral=True)
+            return await interaction.response.send_message("Level must be 1-200.", ephemeral=True)
 
-        guild_id = str(interaction.guild_id)
-        
-        # Actualizăm sau creăm configurația pentru server
         await self.config_db.update_one(
-            {"guild_id": guild_id},
+            {"guild_id": str(interaction.guild_id)},
             {"$set": {f"rewards.{level}": str(role.id)}},
             upsert=True
         )
+        await interaction.response.send_message(f"✅ Level {level} reward set to {role.mention}", ephemeral=True)
 
-        await interaction.response.send_message(
-            f"✅ Configurat: Jucătorii vor primi rolul {role.mention} la **Nivelul {level}**.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="levelrewards", description="Vezi lista de roluri premiu pe acest server")
+    @app_commands.command(name="levelrewards")
     async def levelrewards(self, interaction: discord.Interaction):
         config = await self.config_db.find_one({"guild_id": str(interaction.guild_id)})
-        if not config or "rewards" not in config or not config["rewards"]:
-            return await interaction.response.send_message("Nu sunt setate roluri premiu pe acest server.", ephemeral=True)
+        if not config or "rewards" not in config:
+            return await interaction.response.send_message("No rewards set.", ephemeral=True)
 
         rewards = config["rewards"]
-        # Sortăm nivelele crescător
-        sorted_levels = sorted(rewards.keys(), key=lambda x: int(x))
+        sorted_lvls = sorted(rewards.keys(), key=lambda x: int(x))
+        text = "\n".join([f"**Lvl {l}**: <@&{rewards[l]}>" for l in sorted_lvls])
         
-        description = ""
-        for lvl in sorted_levels:
-            role = interaction.guild.get_role(int(rewards[lvl]))
-            role_mention = role.mention if role else "Rol Șters"
-            description += f"**Nivel {lvl}**: {role_mention}\n"
-
-        embed = discord.Embed(title="🎖️ Premii Nivel", description=description, color=0xffd700)
+        embed = discord.Embed(title="🎖️ Level Rewards", description=text, color=0x00ffaa)
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):

@@ -40,5 +40,33 @@ class General(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
 
+    @commands.command(name="admin-pushupdate")
+    @commands.is_owner()
+    async def push_update(self, ctx, *, message: str):
+        success = 0
+        failed = 0
+        
+        # Notify the admin that the process has started
+        status_msg = await ctx.send(f"⏳ Sending update to {len(self.bot.guilds)} server owners...")
+
+        for guild in self.bot.guilds:
+            owner = guild.owner
+            if owner:
+                try:
+                    embed = discord.Embed(
+                        title="🚀 Aircraft Games - Global Update",
+                        description=message,
+                        color=0xe74c3c
+                    )
+                    embed.set_footer(text=f"Sent to owner of: {guild.name}")
+                    await owner.send(embed=embed)
+                    success += 1
+                except discord.Forbidden:
+                    failed += 1
+                except Exception:
+                    failed += 1
+        
+        await status_msg.edit(content=f"✅ **Update Push Complete!**\nSent: {success}\nFailed: {failed}")
+
 async def setup(bot):
     await bot.add_cog(General(bot))

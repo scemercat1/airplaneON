@@ -8,12 +8,18 @@ class Leveling(commands.Cog):
         self.bot = bot
         self.db = self.bot.db["levels"]
         self.config_db = self.bot.db["level_configs"]
+        self.settings_db = self.bot.db["module_settings"] # New collection for toggles
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
             return
         
+        # Check if the leveling module is enabled
+        guild_settings = await self.settings_db.find_one({"guild_id": str(message.guild.id)})
+        if guild_settings and guild_settings.get("leveling_enabled") is False:
+            return
+
         user_id = str(message.author.id)
         guild_id = str(message.guild.id)
         
@@ -49,9 +55,34 @@ class Leveling(commands.Cog):
                     except:
                         pass
 
+    @app_commands.command(name="leveling_toggle", description="Enable or disable the leveling system")
+    @app_commands.describe(status="Choose to enable or disable leveling")
+    @app_commands.choices(status=[
+        app_commands.Choice(name="Enable", value="on"),
+        app_commands.Choice(name="Disable", value="off")
+    ])
+    @app_commands.checks.has_permissions(administrator=True)
+    async def leveling_toggle(self, interaction: discord.Interaction, status: str):
+        is_enabled = True if status == "on" else False
+        
+        await self.settings_db.update_one(
+            {"guild_id": str(interaction.guild_id)},
+            {"$set": {"leveling_enabled": is_enabled}},
+            upsert=True
+        )
+        
+        state_text = "enabled" if is_enabled else "disabled"
+        await interaction.response.send_message(f"✅ Leveling system has been **{state_text}**.", ephemeral=True)
+
     @app_commands.command(name="rank", description="Check your current level and XP")
     async def rank(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
+        
+        # Check if enabled before showing rank
+        guild_settings = await self.settings_db.find_one({"guild_id": str(interaction.guild_id)})
+        if guild_settings and guild_settings.get("leveling_enabled") is False:
+            return await interaction.response.send_message("❌ The leveling system is currently disabled on this server.", ephemeral=True)
+
         user_data = await self.db.find_one({"user": str(target.id), "guild": str(interaction.guild_id)})
         
         if not user_data:
@@ -61,8 +92,6 @@ class Leveling(commands.Cog):
         embed.set_thumbnail(url=target.display_avatar.url)
         embed.add_field(name="Level", value=user_data["lvl"], inline=True)
         embed.add_field(name="Total XP", value=user_data["xp"], inline=True)
-        # Showing progress to next level
-        xp_next = user_data["lvl"] * 100
         embed.set_footer(text=f"Progress: {user_data['xp'] % 100}/100 XP to next level")
         
         await interaction.response.send_message(embed=embed)

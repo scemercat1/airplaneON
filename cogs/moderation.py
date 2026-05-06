@@ -13,6 +13,39 @@ class Moderation(commands.Cog):
         data = await self.db["settings"].find_one({"guild_id": str(guild_id)})
         return data.get(type) if data else None
 
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot or not message.guild:
+            return
+
+        # Fetch blacklisted words for this server
+        data = await self.db["settings"].find_one({"guild_id": str(message.guild.id)})
+        blacklist = data.get("blacklisted_words", []) if data else []
+
+        # Check if any word in the message is blacklisted
+        if any(word.lower() in message.content.lower() for word in blacklist):
+            try:
+                await message.delete()
+                await message.channel.send(f"{message.author.mention}, You said a blacklisted word. Continuing may result in a warning.", delete_after=5)
+            except discord.Forbidden:
+                # Bot lacks permission to delete messages
+                pass
+
+    @app_commands.command(name="blacklistword", description="Add a word to the server blacklist")
+    @app_commands.describe(word="The word to blacklist")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def blacklistword(self, itx: discord.Interaction, word: str):
+        word = word.lower()
+        
+        # Update MongoDB: push the word to the 'blacklisted_words' array
+        await self.db["settings"].update_one(
+            {"guild_id": str(itx.guild_id)},
+            {"$addToSet": {"blacklisted_words": word}},
+            upsert=True
+        )
+        
+        await itx.response.send_message(f"✅ The word `{word}` has been blacklisted.", ephemeral=True)
+
     @app_commands.command(name="warn")
     async def warn(self, itx, member: discord.Member, reason: str):
         custom = await self.get_msg(itx.guild_id, "warn")
@@ -49,16 +82,20 @@ class Moderation(commands.Cog):
         deleted = await itx.channel.purge(limit=amount)
         await itx.followup.send(f"Deleted {len(deleted)} messages.")
 
-    # Rapid-fire additional commands (logic implied for brevity)
     @app_commands.command(name="slowmode")
-    async def slowmode(self, itx, seconds: int): await itx.channel.edit(slowmode_delay=seconds); await itx.response.send_message(f"Slowmode: {seconds}s")
+    async def slowmode(self, itx, seconds: int): 
+        await itx.channel.edit(slowmode_delay=seconds)
+        await itx.response.send_message(f"Slowmode: {seconds}s")
     
     @app_commands.command(name="lock")
-    async def lock(self, itx): await itx.channel.set_permissions(itx.guild.default_role, send_messages=False); await itx.response.send_message("Channel locked.")
+    async def lock(self, itx): 
+        await itx.channel.set_permissions(itx.guild.default_role, send_messages=False)
+        await itx.response.send_message("Channel locked.")
 
     @app_commands.command(name="unlock")
-    async def unlock(self, itx): await itx.channel.set_permissions(itx.guild.default_role, send_messages=True); await itx.response.send_message("Channel unlocked.")
+    async def unlock(self, itx): 
+        await itx.channel.set_permissions(itx.guild.default_role, send_messages=True)
+        await itx.response.send_message("Channel unlocked.")
 
-    # Other commands to include: unban, unmute, nick, role-add, role-remove, vmute, vdeafen, set-modlog, audit-search, softban, list-warns, clear-warns.
-
-async def setup(bot): await bot.add_cog(Moderation(bot))
+async def setup(bot): 
+    await bot.add_cog(Moderation(bot))

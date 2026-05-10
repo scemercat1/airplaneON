@@ -2,13 +2,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import random
-import asyncio
 
 class Gaming(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = self.bot.db["counting_data"]
-        # In-memory cache to prevent database lag during rapid counting
+        self.settings_db = self.bot.db["settings"]
         self.cache = {} 
 
     async def get_webhook(self, channel):
@@ -23,26 +22,36 @@ class Gaming(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        if "counting" in message.channel.name.lower() and message.content.isdigit():
-            # Get current state from cache or DB
+        # Fetch the designated counting channel from DB
+        guild_data = await self.settings_db.find_one({"guild_id": str(message.guild.id)})
+        if not guild_data or str(message.channel.id) != guild_data.get("counting_channel"):
+            return
+
+        if message.content.isdigit():
             guild_id = str(message.guild.id)
+            
+            # Load stats from DB if not in cache
             if guild_id not in self.cache:
                 data = await self.db.find_one({"guild_id": guild_id})
-                self.cache[guild_id] = data["count"] if data else 0
+                if data:
+                    self.cache[guild_id] = {"count": data["count"], "last_user": data.get("last_user")}
+                else:
+                    self.cache[guild_id] = {"count": 0, "last_user": None}
             
-            current_count = self.cache[guild_id]
+            current_count = self.cache[guild_id]["count"]
+            last_user_id = self.cache[guild_id]["last_user"]
             user_number = int(message.content)
 
-            if user_number == current_count + 1:
-                # Correct number!
-                self.cache[guild_id] = user_number
+            # RULE: Correct number AND can't be the same user twice
+            if user_number == current_count + 1 and str(message.author.id) != last_user_id:
+                self.cache[guild_id] = {"count": user_number, "last_user": str(message.author.id)}
+                
                 await self.db.update_one(
                     {"guild_id": guild_id},
-                    {"$set": {"count": user_number}},
+                    {"$set": {"count": user_number, "last_user": str(message.author.id)}},
                     upsert=True
                 )
                 
-                # Webhook magic: copy user and send number
                 webhook = await self.get_webhook(message.channel)
                 await message.delete()
                 await webhook.send(
@@ -51,17 +60,40 @@ class Gaming(commands.Cog):
                     avatar_url=message.author.display_avatar.url
                 )
             else:
-                # Wrong number: Delete and say NOTHING as requested
-                self.cache[guild_id] = 0
-                await self.db.update_one({"guild_id": guild_id}, {"$set": {"count": 0}}, upsert=True)
+                # Wrong number or same user: Reset and delete silently
+                self.cache[guild_id] = {"count": 0, "last_user": None}
+                await self.db.update_one(
+                    {"guild_id": guild_id}, 
+                    {"$set": {"count": 0, "last_user": None}}, 
+                    upsert=True
+                )
                 await message.delete()
 
+    @app_commands.command(name="setcounting", description="Set the channel for the counting game")
+    @app_commands.describe(channel="The channel where people will count")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setcounting(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await self.settings_db.update_one(
+            {"guild_id": str(interaction.guild_id)},
+            {"$set": {"counting_channel": str(channel.id)}},
+            upsert=True
+        )
+        await interaction.response.send_message(f"✅ Counting channel has been set to {channel.mention}", ephemeral=True)
+
     @app_commands.command(name="mysteriousball", description="Ask the ball a question")
+    @app_commands.describe(question="What do you want to ask the ball?")
     async def mysteriousball(self, interaction: discord.Interaction, question: str):
-        responses = ["Yes", "No", "Whatever", "Go touch grass", "Hahaha", "Maybe...", "Ask again never", "The stars say yes", "Most definitely not"]
+        responses = [
+            "Yes", "No", "Whatever", "Go touch grass", 
+            "Hahaha", "Maybe...", "Ask again never", 
+            "The stars say yes", "Most definitely not"
+        ]
+        response = random.choice(responses)
+        
         embed = discord.Embed(title="🔮 The Mysterious Ball", color=0x9b59b6)
         embed.add_field(name="Question", value=question, inline=False)
-        embed.add_field(name="Answer", value=f"**{random.choice(responses)}**", inline=False)
+        embed.add_field(name="Answer", value=f"**{response}**", inline=False)
+        
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="rps", description="Play Rock Paper Scissors with the bot")
@@ -69,7 +101,6 @@ class Gaming(commands.Cog):
         view = RPSView(interaction.user)
         await interaction.response.send_message("🪨 📄 ✂️ Choose your weapon!", view=view)
 
-# --- Button Logic for RPS ---
 class RPSView(discord.ui.View):
     def __init__(self, user):
         super().__init__(timeout=30)

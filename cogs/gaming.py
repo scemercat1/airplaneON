@@ -2,6 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import random
+import aiohttp
+import os
+import datetime
 
 class Gaming(commands.Cog):
     def __init__(self, bot):
@@ -9,7 +12,9 @@ class Gaming(commands.Cog):
         self.db = self.bot.db["counting_data"]
         self.settings_db = self.bot.db["settings"]
         self.cache = {} 
+        self.weather_api_key = os.getenv("WEATHER_API_KEY")
 
+    # --- Counting System ---
     async def get_webhook(self, channel):
         webhooks = await channel.webhooks()
         webhook = discord.utils.get(webhooks, name="Aircraft Counting")
@@ -22,7 +27,6 @@ class Gaming(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
-        # Fetch the designated counting channel from DB
         guild_data = await self.settings_db.find_one({"guild_id": str(message.guild.id)})
         if not guild_data or str(message.channel.id) != guild_data.get("counting_channel"):
             return
@@ -30,7 +34,6 @@ class Gaming(commands.Cog):
         if message.content.isdigit():
             guild_id = str(message.guild.id)
             
-            # Load stats from DB if not in cache
             if guild_id not in self.cache:
                 data = await self.db.find_one({"guild_id": guild_id})
                 if data:
@@ -42,10 +45,8 @@ class Gaming(commands.Cog):
             last_user_id = self.cache[guild_id]["last_user"]
             user_number = int(message.content)
 
-            # RULE: Correct number AND can't be the same user twice
             if user_number == current_count + 1 and str(message.author.id) != last_user_id:
                 self.cache[guild_id] = {"count": user_number, "last_user": str(message.author.id)}
-                
                 await self.db.update_one(
                     {"guild_id": guild_id},
                     {"$set": {"count": user_number, "last_user": str(message.author.id)}},
@@ -60,17 +61,13 @@ class Gaming(commands.Cog):
                     avatar_url=message.author.display_avatar.url
                 )
             else:
-                # Wrong number or same user: Reset and delete silently
                 self.cache[guild_id] = {"count": 0, "last_user": None}
-                await self.db.update_one(
-                    {"guild_id": guild_id}, 
-                    {"$set": {"count": 0, "last_user": None}}, 
-                    upsert=True
-                )
+                await self.db.update_one({"guild_id": guild_id}, {"$set": {"count": 0, "last_user": None}}, upsert=True)
                 await message.delete()
 
+    # --- Commands ---
+
     @app_commands.command(name="setcounting", description="Set the channel for the counting game")
-    @app_commands.describe(channel="The channel where people will count")
     @app_commands.checks.has_permissions(administrator=True)
     async def setcounting(self, interaction: discord.Interaction, channel: discord.TextChannel):
         await self.settings_db.update_one(
@@ -80,27 +77,59 @@ class Gaming(commands.Cog):
         )
         await interaction.response.send_message(f"✅ Counting channel has been set to {channel.mention}", ephemeral=True)
 
+    @app_commands.command(name="weather", description="Check the weather in any city or country")
+    @app_commands.describe(location="The city or country to check")
+    async def weather(self, interaction: discord.Interaction, location: str):
+        await interaction.response.defer()
+
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={self.weather_api_key}&units=metric"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    city = data['name']
+                    country = data['sys']['country']
+                    temp = data['main']['temp']
+                    desc = data['weather'][0]['description'].capitalize()
+                    humidity = data['main']['humidity']
+                    icon = data['weather'][0]['icon']
+                    
+                    # Convert sunrise/sunset timestamps to readable format
+                    sunrise = datetime.datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M')
+                    sunset = datetime.datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
+                    
+                    embed = discord.Embed(
+                        title=f"🌡️ Weather in {city}, {country}",
+                        description=f"**{desc}**",
+                        color=0x3498db
+                    )
+                    embed.set_thumbnail(url=f"http://openweathermap.org/img/wn/{icon}@4x.png")
+                    embed.add_field(name="Temperature", value=f"{temp}°C", inline=True)
+                    embed.add_field(name="Humidity", value=f"{humidity}%", inline=True)
+                    embed.add_field(name="Sunrise", value=f"🌅 {sunrise}", inline=True)
+                    embed.add_field(name="Sunset", value=f"🌇 {sunset}", inline=True)
+                    embed.set_footer(text="Powered by Aircraft Games | OpenWeatherMap")
+
+                    await interaction.followup.send(embed=embed)
+                else:
+                    await interaction.followup.send(f"❌ Location `{location}` not found.", ephemeral=True)
+
     @app_commands.command(name="mysteriousball", description="Ask the ball a question")
-    @app_commands.describe(question="What do you want to ask the ball?")
     async def mysteriousball(self, interaction: discord.Interaction, question: str):
-        responses = [
-            "Yes", "No", "Whatever", "Go touch grass", 
-            "Hahaha", "Maybe...", "Ask again never", 
-            "The stars say yes", "Most definitely not"
-        ]
-        response = random.choice(responses)
-        
+        responses = ["Yes", "No", "Whatever", "Go touch grass", "Hahaha", "Maybe...", "Ask again never", "The stars say yes", "Most definitely not"]
         embed = discord.Embed(title="🔮 The Mysterious Ball", color=0x9b59b6)
         embed.add_field(name="Question", value=question, inline=False)
-        embed.add_field(name="Answer", value=f"**{response}**", inline=False)
-        
+        embed.add_field(name="Answer", value=f"**{random.choice(responses)}**", inline=False)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="rps", description="Play Rock Paper Scissors with the bot")
+    @app_commands.command(name="rps", description="Play Rock Paper Scissors")
     async def rps(self, interaction: discord.Interaction):
         view = RPSView(interaction.user)
         await interaction.response.send_message("🪨 📄 ✂️ Choose your weapon!", view=view)
 
+# --- Button Logic for RPS (Remains the same) ---
 class RPSView(discord.ui.View):
     def __init__(self, user):
         super().__init__(timeout=30)
@@ -121,25 +150,18 @@ class RPSView(discord.ui.View):
     async def play(self, interaction: discord.Interaction, user_choice):
         if interaction.user != self.user:
             return await interaction.response.send_message("This isn't your game!", ephemeral=True)
-        
         bot_choice = random.choice(["Rock", "Paper", "Scissors"])
-        
         if user_choice == bot_choice:
-            result = "It's a tie!"
-            color = 0x95a5a6
+            result, color = "It's a tie!", 0x95a5a6
         elif (user_choice == "Rock" and bot_choice == "Scissors") or \
              (user_choice == "Paper" and bot_choice == "Rock") or \
              (user_choice == "Scissors" and bot_choice == "Paper"):
-            result = "You win! 🎉"
-            color = 0x2ecc71
+            result, color = "You win! 🎉", 0x2ecc71
         else:
-            result = "You lost! 💀"
-            color = 0xe74c3c
-
+            result, color = "You lost! 💀", 0xe74c3c
         embed = discord.Embed(title="RPS Results", description=f"**{result}**", color=color)
         embed.add_field(name="You", value=user_choice, inline=True)
-        embed.add_field(name="Aircraft Bot", value=bot_choice, inline=True)
-        
+        embed.add_field(name="Bot", value=bot_choice, inline=True)
         await interaction.response.edit_message(content=None, embed=embed, view=None)
 
 async def setup(bot):

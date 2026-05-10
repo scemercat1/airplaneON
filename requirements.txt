@@ -1,3 +1,5 @@
 discord.py
 motor
 dnspython
+aiohttp
+python-dotenv

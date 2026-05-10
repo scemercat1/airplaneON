@@ -90,7 +90,7 @@ class Gaming(commands.Cog):
         await interaction.response.send_message(f"🚀 **Counting System** active in {channel.mention}!", ephemeral=True)
 
     @app_commands.command(name="weather", description="Get professional weather info")
-    @app_commands.describe(location="City name (e.g., Bucharest, New York)")
+    @app_commands.describe(location="City name (e.g., Tokyo, New York)")
     async def weather(self, interaction: discord.Interaction, location: str):
         await interaction.response.defer()
 

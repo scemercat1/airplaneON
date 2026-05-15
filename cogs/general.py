@@ -22,7 +22,7 @@ class General(commands.Cog):
         embed.add_field(name="🌐 Web Dashboard", value="Manage your server settings at our web panel.", inline=False)
         embed.add_field(name="🛠️ Staff Setup", value="Configure staff roles via `/mods`.", inline=False)
         embed.add_field(name="📈 Leveling Setup", value="1. Talk for XP.\n2. `/levelconfig` for rewards.\n3. `/rank` for stats.", inline=False)
-        embed.add_field(name="📝 About", value="Built with discord.py and Motor. Version 1.0.0", inline=False)
+        embed.add_field(name="💎 Premium", value="Use `!custombot` to unlock server-specific profiles!", inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="reactionrolemenu", description="Create a customizable reaction role menu")
@@ -110,7 +110,20 @@ class General(commands.Cog):
         await asyncio.sleep(1)
 
         try:
-            await ctx.guild.me.edit(nick=new_name, description=new_bio)
+            payload = {}
+            if new_name: payload["nick"] = new_name
+            if new_bio: payload["description"] = new_bio
+
+            await self.bot.http.request(
+                discord.http.Route(
+                    "PATCH", 
+                    "/guilds/{guild_id}/members/{user_id}", 
+                    guild_id=ctx.guild.id, 
+                    user_id=self.bot.user.id
+                ),
+                json=payload
+            )
+            
             await load.delete()
             await ctx.send("✅ **Bot updated on this guild with success!**\nThanks for using AircraftGames! ✈️")
         except Exception as e:
@@ -119,7 +132,13 @@ class General(commands.Cog):
     @commands.command(name="premiumcoderegen")
     @commands.is_owner()
     async def premiumcoderegen(self, ctx, time: str):
-        days = 30 if time == "1m" else (365 if time == "1y" else 3650)
+        time = time.lower()
+        if time == "1d": days = 1
+        elif time == "1m": days = 30
+        elif time == "1y": days = 365
+        elif time == "10y": days = 3650
+        else: return await ctx.send("❌ Use: `1d`, `1m`, `1y`, or `10y`.")
+
         new_code = f"AC-{uuid.uuid4().hex[:8].upper()}"
         await self.codes_db.insert_one({"code": new_code, "duration_days": days, "used": False})
         try:

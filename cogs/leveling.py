@@ -8,14 +8,14 @@ class Leveling(commands.Cog):
         self.bot = bot
         self.db = self.bot.db["levels"]
         self.config_db = self.bot.db["level_configs"]
-        self.settings_db = self.bot.db["module_settings"] # New collection for toggles
+        self.settings_db = self.bot.db["module_settings"] 
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
             return
         
-        # Check if the leveling module is enabled
+        
         guild_settings = await self.settings_db.find_one({"guild_id": str(message.guild.id)})
         if guild_settings and guild_settings.get("leveling_enabled") is False:
             return
@@ -78,7 +78,7 @@ class Leveling(commands.Cog):
     async def rank(self, interaction: discord.Interaction, member: discord.Member = None):
         target = member or interaction.user
         
-        # Check if enabled before showing rank
+    
         guild_settings = await self.settings_db.find_one({"guild_id": str(interaction.guild_id)})
         if guild_settings and guild_settings.get("leveling_enabled") is False:
             return await interaction.response.send_message("❌ The leveling system is currently disabled on this server.", ephemeral=True)
@@ -122,6 +122,41 @@ class Leveling(commands.Cog):
         
         embed = discord.Embed(title="🎖️ Level Rewards", description=text, color=0x00ffaa)
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="leveladd", description="Add levels to a user")
+    @app_commands.describe(member="Member to give levels", levels="Amount of levels")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def leveladd(self, interaction: discord.Interaction, member: discord.Member, levels: int):
+        user_id, guild_id = str(member.id), str(interaction.guild_id)
+        user_data = await self.db.find_one({"user": user_id, "guild": guild_id})
+        
+        current_lvl = user_data["lvl"] if user_data else 1
+        new_lvl = current_lvl + levels
+        new_xp = (new_lvl - 1) * 100
+        
+        await self.db.update_one(
+            {"user": user_id, "guild": guild_id},
+            {"$set": {"xp": new_xp, "lvl": new_lvl}},
+            upsert=True
+        )
+        await interaction.response.send_message(f"✅ Added {levels} levels to {member.mention}. Now Level {new_lvl}.", ephemeral=True)
+
+    @app_commands.command(name="xpadd", description="Add XP to a user")
+    @app_commands.describe(member="Member to give XP", amount="Amount of XP")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xpadd(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+        user_id, guild_id = str(member.id), str(interaction.guild_id)
+        user_data = await self.db.find_one({"user": user_id, "guild": guild_id})
+        
+        new_xp = (user_data["xp"] if user_data else 0) + amount
+        new_lvl = (new_xp // 100) + 1
+        
+        await self.db.update_one(
+            {"user": user_id, "guild": guild_id},
+            {"$set": {"xp": new_xp, "lvl": new_lvl}},
+            upsert=True
+        )
+        await interaction.response.send_message(f"✅ Added {amount} XP to {member.mention}.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Leveling(bot))

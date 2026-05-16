@@ -5,125 +5,381 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 import uuid
+import asyncio
 
 # =========================================================
-# MAIN COG
+# GENERAL COG
 # =========================================================
 
 class General(commands.Cog):
 
     def __init__(self, bot):
+
         self.bot = bot
 
-        # DATABASE COLLECTIONS
+        # DATABASES
         self.codes_db = bot.db["premium_codes"]
         self.guild_db = bot.db["guild_data"]
         self.menus_db = bot.db["role_menus"]
+        self.config_db = bot.db["system_config"]
 
-        # WATER REMINDER STORAGE
+        # WATER REMINDERS
         self.water_users = {}
+
+        # COMMAND STATS
+        self.command_usage = {}
 
         self.water_ticker.start()
 
-    # =========================================================
+    # =====================================================
     # COG UNLOAD
-    # =========================================================
+    # =====================================================
 
     def cog_unload(self):
         self.water_ticker.cancel()
 
-    # =========================================================
+    # =====================================================
     # TEAM CHECK
-    # =========================================================
+    # =====================================================
 
     async def check_is_team(self, user_id: int):
 
         app = await self.bot.application_info()
 
+        # TEAM APPLICATION
         if app.team:
-            return any(member.id == user_id for member in app.team.members)
 
+            for member in app.team.members:
+
+                if member.id == user_id:
+                    return True
+
+        # OWNER APPLICATION
         return user_id == app.owner.id
 
-    # =========================================================
-    # !owner-testingserver
-    # =========================================================
+    # =====================================================
+    # COMMAND LOGGER
+    # =====================================================
 
-    @commands.command(name="owner-testingserver")
+    async def register_command_use(self, command_name: str):
+
+        if command_name not in self.command_usage:
+            self.command_usage[command_name] = 0
+
+        self.command_usage[command_name] += 1
+
+    # =====================================================
+    # %owner%testingserver
+    # OWNER / DEV TEAM ONLY
+    # LIFETIME LIMIT: 3
+    # =====================================================
+
+    @commands.command(name="owner%testingserver")
     async def owner_testingserver(self, ctx):
 
-        if not await self.check_is_team(ctx.author.id):
-            return await ctx.send("❌ Unauthorized.")
+        await self.register_command_use(
+            "owner%testingserver"
+        )
+
+        # SECURITY
+        if not await self.check_is_team(
+            ctx.author.id
+        ):
+            return await ctx.send(
+                "❌ Unauthorized."
+            )
+
+        # LIFETIME LIMIT
+        usage = await self.config_db.find_one({
+            "type": "testingserver_usage"
+        })
+
+        if not usage:
+
+            await self.config_db.insert_one({
+                "type": "testingserver_usage",
+                "count": 0
+            })
+
+            usage = {
+                "count": 0
+            }
+
+        if usage["count"] >= 3:
+
+            return await ctx.send(
+                "❌ Lifetime limit reached."
+            )
+
+        warning = discord.Embed(
+            title="⚠️ SERVER TRANSFORMATION",
+            description=(
+                "Deleting all channels "
+                "and preparing debug server..."
+            ),
+            color=0xe74c3c
+        )
+
+        await ctx.send(embed=warning)
+
+        await asyncio.sleep(3)
 
         guild = ctx.guild
 
-        category = await guild.create_category(
-            "AIRCRAFT OBSERVABILITY"
+        # DELETE EVERYTHING
+        for channel in guild.channels:
+
+            try:
+                await channel.delete()
+            except:
+                pass
+
+        # CREATE CATEGORIES
+        testing = await guild.create_category(
+            "TESTING"
         )
 
+        hangout = await guild.create_category(
+            "HANGOUT"
+        )
+
+        observability = await guild.create_category(
+            "OBSERVABILITY"
+        )
+
+        # TESTING CHANNELS
+        await guild.create_text_channel(
+            "test-1",
+            category=testing
+        )
+
+        await guild.create_text_channel(
+            "test-2",
+            category=testing
+        )
+
+        await guild.create_text_channel(
+            "test-3",
+            category=testing
+        )
+
+        # HANGOUT CHANNELS
+        await guild.create_text_channel(
+            "counting",
+            category=hangout
+        )
+
+        await guild.create_text_channel(
+            "games",
+            category=hangout
+        )
+
+        # OBSERVABILITY CHANNELS
         premium_channel = await guild.create_text_channel(
             "premium",
-            category=category
+            category=observability
         )
 
-        instances_channel = await guild.create_text_channel(
+        custom_channel = await guild.create_text_channel(
             "custominstances",
-            category=category
+            category=observability
         )
 
-        logs_channel = await guild.create_text_channel(
-            "logs",
-            category=category
+        info_channel = await guild.create_text_channel(
+            "info",
+            category=observability
         )
 
-        embed = discord.Embed(
-            title="✅ Observability Ready",
-            description="Aircraft observability deployed.",
+        await guild.create_text_channel(
+            "lolz",
+            category=observability
+        )
+
+        await guild.create_voice_channel(
+            "lolZ2-fr",
+            category=observability
+        )
+
+        # PREMIUM PANEL
+        premium_embed = discord.Embed(
+            title="💎 Premium Observability",
+            description=(
+                "Premium servers & codes."
+            ),
+            color=0xf1c40f
+        )
+
+        premium_servers = []
+
+        async for data in self.guild_db.find({
+            "premium": True
+        }):
+
+            premium_servers.append(
+                f"• {data['guild_id']}"
+            )
+
+        premium_codes = []
+
+        async for code in self.codes_db.find():
+
+            premium_codes.append(
+                f"• {code['code']} | Used: {code['used']}"
+            )
+
+        premium_embed.add_field(
+            name="Servers",
+            value=(
+                "\n".join(premium_servers)
+                if premium_servers
+                else "None"
+            ),
+            inline=False
+        )
+
+        premium_embed.add_field(
+            name="Codes",
+            value=(
+                "\n".join(premium_codes[:20])
+                if premium_codes
+                else "None"
+            ),
+            inline=False
+        )
+
+        await premium_channel.send(
+            embed=premium_embed
+        )
+
+        # CUSTOMBOT PANEL
+        custom_embed = discord.Embed(
+            title="🤖 Custom Instances",
+            description=(
+                "Servers using !custombot"
+            ),
+            color=0x3498db
+        )
+
+        custom_servers = []
+
+        async for data in self.guild_db.find({
+            "custombot_name": {
+                "$exists": True
+            }
+        }):
+
+            custom_servers.append(
+                f"• {data['guild_id']} "
+                f"| {data.get('custombot_name')}"
+            )
+
+        custom_embed.add_field(
+            name="Instances",
+            value=(
+                "\n".join(custom_servers)
+                if custom_servers
+                else "None"
+            ),
+            inline=False
+        )
+
+        await custom_channel.send(
+            embed=custom_embed
+        )
+
+        # INFO PANEL
+        total_members = sum(
+            g.member_count
+            for g in self.bot.guilds
+        )
+
+        most_used = "None"
+
+        if self.command_usage:
+
+            most_used = max(
+                self.command_usage,
+                key=self.command_usage.get
+            )
+
+        info_embed = discord.Embed(
+            title="📊 Global Information",
             color=0x2ecc71
         )
 
-        await premium_channel.send(embed=embed)
-        await instances_channel.send(embed=embed)
-        await logs_channel.send(embed=embed)
-
-        await ctx.send(
-            "✅ Testing server initialized."
+        info_embed.add_field(
+            name="Servers",
+            value=str(len(self.bot.guilds)),
+            inline=True
         )
 
-    # =========================================================
+        info_embed.add_field(
+            name="Members",
+            value=str(total_members),
+            inline=True
+        )
+
+        info_embed.add_field(
+            name="Most Used Command",
+            value=most_used,
+            inline=False
+        )
+
+        await info_channel.send(
+            embed=info_embed
+        )
+
+        # UPDATE USAGE
+        await self.config_db.update_one(
+            {
+                "type": "testingserver_usage"
+            },
+            {
+                "$inc": {
+                    "count": 1
+                }
+            }
+        )
+
+    # =====================================================
     # /help
-    # =========================================================
+    # EVERYONE
+    # =====================================================
 
     @app_commands.command(
         name="help",
-        description="Aircraft bot information"
+        description="Aircraft information"
     )
     async def help_command(
         self,
         interaction: discord.Interaction
     ):
 
+        await self.register_command_use(
+            "/help"
+        )
+
         embed = discord.Embed(
             title="✈️ Aircraft Bot",
-            description="Premium automation system.",
+            description="Premium bot system.",
             color=0x3498db
         )
 
         embed.add_field(
             name="💎 Premium",
-            value="Use `/premium`.",
+            value="/premium",
             inline=False
         )
 
         embed.add_field(
-            name="🎭 Reaction Roles",
-            value="Use `/rolemenu` and `/reactionroles`.",
+            name="🎭 Roles",
+            value="/rolemenu + /reactionroles",
             inline=False
         )
 
         embed.add_field(
-            name="💧 Water Reminder",
-            value="Use `/drinkwater`.",
+            name="💧 Water",
+            value="/drinkwater",
             inline=False
         )
 
@@ -131,13 +387,17 @@ class General(commands.Cog):
             embed=embed
         )
 
-    # =========================================================
+    # =====================================================
     # /rolemenu
-    # =========================================================
+    # ADMIN ONLY
+    # =====================================================
 
     @app_commands.command(
         name="rolemenu",
         description="Create a role menu"
+    )
+    @app_commands.checks.has_permissions(
+        administrator=True
     )
     async def rolemenu(
         self,
@@ -152,6 +412,10 @@ class General(commands.Cog):
         emoji3: str = None
     ):
 
+        await self.register_command_use(
+            "/rolemenu"
+        )
+
         data = []
 
         data.append({
@@ -160,12 +424,14 @@ class General(commands.Cog):
         })
 
         if role2 and emoji2:
+
             data.append({
                 "role_id": role2.id,
                 "emoji": emoji2
             })
 
         if role3 and emoji3:
+
             data.append({
                 "role_id": role3.id,
                 "emoji": emoji3
@@ -183,16 +449,20 @@ class General(commands.Cog):
         )
 
         await interaction.response.send_message(
-            f"✅ Saved menu `{name}`."
+            f"✅ Menu `{name}` saved."
         )
 
-    # =========================================================
+    # =====================================================
     # /reactionroles
-    # =========================================================
+    # ADMIN ONLY
+    # =====================================================
 
     @app_commands.command(
         name="reactionroles",
         description="Deploy reaction roles"
+    )
+    @app_commands.checks.has_permissions(
+        administrator=True
     )
     async def reactionroles(
         self,
@@ -200,11 +470,16 @@ class General(commands.Cog):
         menu_name: str
     ):
 
+        await self.register_command_use(
+            "/reactionroles"
+        )
+
         menu = await self.menus_db.find_one({
             "name": menu_name
         })
 
         if not menu:
+
             return await interaction.response.send_message(
                 "❌ Menu not found.",
                 ephemeral=True
@@ -225,6 +500,7 @@ class General(commands.Cog):
             )
 
             if role:
+
                 lines.append(
                     f"{role_data['emoji']} — {role.mention}"
                 )
@@ -244,21 +520,25 @@ class General(commands.Cog):
         )
 
         for role_data in menu["roles"]:
+
             await msg.add_reaction(
                 role_data["emoji"]
             )
 
         await interaction.response.send_message(
-            "✅ Reaction role panel deployed.",
+            "✅ Deployed.",
             ephemeral=True
         )
 
-    # =========================================================
+    # =====================================================
     # REACTION ADD
-    # =========================================================
+    # =====================================================
 
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload):
+    async def on_raw_reaction_add(
+        self,
+        payload
+    ):
 
         if payload.user_id == self.bot.user.id:
             return
@@ -274,15 +554,9 @@ class General(commands.Cog):
             payload.user_id
         )
 
-        if not member:
-            return
-
         channel = guild.get_channel(
             payload.channel_id
         )
-
-        if not channel:
-            return
 
         try:
             message = await channel.fetch_message(
@@ -326,17 +600,17 @@ class General(commands.Cog):
 
                 if role:
 
-                    try:
-                        await member.add_roles(role)
-                    except:
-                        pass
+                    await member.add_roles(role)
 
-    # =========================================================
+    # =====================================================
     # REACTION REMOVE
-    # =========================================================
+    # =====================================================
 
     @commands.Cog.listener()
-    async def on_raw_reaction_remove(self, payload):
+    async def on_raw_reaction_remove(
+        self,
+        payload
+    ):
 
         guild = self.bot.get_guild(
             payload.guild_id
@@ -349,15 +623,9 @@ class General(commands.Cog):
             payload.user_id
         )
 
-        if not member:
-            return
-
         channel = guild.get_channel(
             payload.channel_id
         )
-
-        if not channel:
-            return
 
         try:
             message = await channel.fetch_message(
@@ -401,14 +669,12 @@ class General(commands.Cog):
 
                 if role:
 
-                    try:
-                        await member.remove_roles(role)
-                    except:
-                        pass
+                    await member.remove_roles(role)
 
-    # =========================================================
+    # =====================================================
     # /premium
-    # =========================================================
+    # EVERYONE
+    # =====================================================
 
     @app_commands.command(
         name="premium",
@@ -420,19 +686,25 @@ class General(commands.Cog):
         code: str
     ):
 
+        await self.register_command_use(
+            "/premium"
+        )
+
         db_code = await self.codes_db.find_one({
             "code": code.upper()
         })
 
         if not db_code:
+
             return await interaction.response.send_message(
                 "❌ Invalid code.",
                 ephemeral=True
             )
 
         if db_code["used"]:
+
             return await interaction.response.send_message(
-                "❌ Code already used.",
+                "❌ Already used.",
                 ephemeral=True
             )
 
@@ -444,7 +716,9 @@ class General(commands.Cog):
         )
 
         await self.guild_db.update_one(
-            {"guild_id": interaction.guild.id},
+            {
+                "guild_id": interaction.guild.id
+            },
             {
                 "$set": {
                     "premium": True,
@@ -455,7 +729,9 @@ class General(commands.Cog):
         )
 
         await self.codes_db.update_one(
-            {"code": code.upper()},
+            {
+                "code": code.upper()
+            },
             {
                 "$set": {
                     "used": True
@@ -467,9 +743,10 @@ class General(commands.Cog):
             "✅ Premium activated."
         )
 
-    # =========================================================
+    # =====================================================
     # !custombot
-    # =========================================================
+    # PREMIUM ONLY
+    # =====================================================
 
     @commands.command(name="custombot")
     async def custombot(
@@ -479,11 +756,18 @@ class General(commands.Cog):
         nickname
     ):
 
+        await self.register_command_use(
+            "!custombot"
+        )
+
         data = await self.guild_db.find_one({
             "guild_id": ctx.guild.id
         })
 
-        if not data or not data.get("premium"):
+        if not data or not data.get(
+            "premium"
+        ):
+
             return await ctx.send(
                 "❌ Premium required."
             )
@@ -494,19 +778,31 @@ class General(commands.Cog):
                 nick=nickname
             )
 
+            await self.guild_db.update_one(
+                {
+                    "guild_id": ctx.guild.id
+                },
+                {
+                    "$set": {
+                        "custombot_name": nickname
+                    }
+                }
+            )
+
             await ctx.send(
-                f"✅ Nickname changed to `{nickname}`."
+                f"✅ Changed to `{nickname}`"
             )
 
         except Exception as e:
 
             await ctx.send(
-                f"❌ Error: {e}"
+                f"❌ {e}"
             )
 
-    # =========================================================
+    # =====================================================
     # !premiumcoderegen
-    # =========================================================
+    # DEV TEAM ONLY
+    # =====================================================
 
     @commands.command(name="premiumcoderegen")
     async def premiumcoderegen(
@@ -515,9 +811,14 @@ class General(commands.Cog):
         days: int
     ):
 
+        await self.register_command_use(
+            "!premiumcoderegen"
+        )
+
         if not await self.check_is_team(
             ctx.author.id
         ):
+
             return await ctx.send(
                 "❌ Unauthorized."
             )
@@ -533,21 +834,26 @@ class General(commands.Cog):
         })
 
         await ctx.send(
-            f"✅ Generated code:\n`{code}`"
+            f"✅ Generated:\n`{code}`"
         )
 
-    # =========================================================
+    # =====================================================
     # /drinkwater
-    # =========================================================
+    # EVERYONE
+    # =====================================================
 
     @app_commands.command(
         name="drinkwater",
-        description="Enable water reminders"
+        description="Enable hydration reminders"
     )
     async def drinkwater(
         self,
         interaction: discord.Interaction
     ):
+
+        await self.register_command_use(
+            "/drinkwater"
+        )
 
         self.water_users[
             interaction.user.id
@@ -556,12 +862,12 @@ class General(commands.Cog):
         }
 
         await interaction.response.send_message(
-            "💧 Water reminders enabled."
+            "💧 Enabled."
         )
 
-    # =========================================================
+    # =====================================================
     # WATER LOOP
-    # =========================================================
+    # =====================================================
 
     @tasks.loop(minutes=60)
     async def water_ticker(self):
@@ -595,4 +901,7 @@ class General(commands.Cog):
 # =========================================================
 
 async def setup(bot):
-    await bot.add_cog(General(bot))
+
+    await bot.add_cog(
+        General(bot)
+    )

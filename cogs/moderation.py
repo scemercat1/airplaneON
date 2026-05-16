@@ -5,6 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 import datetime
 import asyncio
+import random
 
 class Moderation(commands.Cog):
 
@@ -159,21 +160,10 @@ class Moderation(commands.Cog):
         reason: str = "No reason"
     ):
 
-        custom = await self.get_msg(
-            itx.guild_id,
-            "kick"
-        )
-
-        msg = (
-            custom.replace("{reason}", reason)
-            if custom
-            else f"Kicked for {reason}"
-        )
-
         try:
 
             await member.send(
-                f"👞 {msg}"
+                f"👞 Kicked for {reason}"
             )
 
         except:
@@ -327,6 +317,7 @@ class Moderation(commands.Cog):
         )
 
     # =====================================================
+    # LIVE EVENT
     # !owner-2-live-event
     # =====================================================
 
@@ -363,7 +354,7 @@ class Moderation(commands.Cog):
         # STARTUP
         # =================================================
 
-        loading = await ctx.send(
+        await ctx.send(
             "```yaml\n"
             "-----------------------\n"
             "--- 📂 Loading Updates ---\n"
@@ -371,18 +362,14 @@ class Moderation(commands.Cog):
             "✅ Loaded: update2.0\n"
             "✅ Loaded: moderation\n"
             "✅ Loaded: premiumcore\n"
+            "✅ Loaded: observability\n"
             "-----------------------\n"
             "```"
         )
 
-        await asyncio.sleep(4)
+        await asyncio.sleep(2)
 
-        # =================================================
-        # BOOT
-        # =================================================
-
-        await loading.edit(
-            content=
+        await ctx.send(
             "```bash\n"
             "Starting Container...\n"
             "Successfully synced all commands.\n"
@@ -392,51 +379,160 @@ class Moderation(commands.Cog):
             "```"
         )
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
 
         # =================================================
-        # WARNINGS
+        # TECHNICIAN WEBHOOKS
+        # =================================================
+
+        try:
+
+            webhook = await ctx.channel.create_webhook(
+                name="Aircraft Tech"
+            )
+
+        except:
+
+            return await ctx.send(
+                "❌ Missing Manage Webhooks permission."
+            )
+
+        tech_messages = [
+
+            (
+                "TechSupport.exe",
+                "https://i.imgur.com/6RKk4hG.png",
+                "Everything looks stable."
+            ),
+
+            (
+                "Database Monitor",
+                "https://i.imgur.com/fYqMHYQ.png",
+                "MongoDB ping rising..."
+            ),
+
+            (
+                "Container Watcher",
+                "https://i.imgur.com/8Km9tLL.png",
+                "Wait... why is latency spiking?"
+            ),
+
+            (
+                "TechSupport.exe",
+                "https://i.imgur.com/6RKk4hG.png",
+                "Probably just Discord API."
+            ),
+
+            (
+                "Database Monitor",
+                "https://i.imgur.com/fYqMHYQ.png",
+                "No... something connected."
+            ),
+
+            (
+                "Container Watcher",
+                "https://i.imgur.com/8Km9tLL.png",
+                "Unknown external session detected."
+            )
+        ]
+
+        for username, avatar, content in tech_messages:
+
+            await webhook.send(
+                content=content,
+                username=username,
+                avatar_url=avatar
+            )
+
+            await asyncio.sleep(2)
+
+        # =================================================
+        # SYSTEM WARNINGS
         # =================================================
 
         warnings = [
 
             "```diff\n- websocket instability detected\n```",
 
-            "```ini\n[AircraftCore]\nlatency=893ms\n```",
+            "```ini\n[AircraftCore]\nlatency=932ms\n```",
 
             "```yaml\nmemory_fragmentation: true\n```",
 
-            "```fix\n[WARN] unknown payload detected\n```"
+            "```fix\n[WARN] unknown payload detected\n```",
+
+            "```diff\n- unauthorized session opened\n```"
         ]
 
         for warn in warnings:
 
             await ctx.send(warn)
 
+            await asyncio.sleep(1.5)
+
+        # =================================================
+        # SHORT COUNTDOWN
+        # =================================================
+
+        for i in range(15, 0, -5):
+
+            await ctx.send(
+                f"```Connecting to AircraftNode... {i}s```"
+            )
+
             await asyncio.sleep(2)
 
         # =================================================
-        # WAIT
+        # HACKER ENTERS
         # =================================================
 
-        wait_msg = await ctx.send(
-            "```Connecting to AircraftNode...```"
-        )
+        hacker_messages = [
 
-        for i in range(60, 0, -10):
+            (
+                "unknown_client.exe",
+                "https://i.imgur.com/t8dAqQp.png",
+                "hello?"
+            ),
 
-            await asyncio.sleep(10)
+            (
+                "TechSupport.exe",
+                "https://i.imgur.com/6RKk4hG.png",
+                "Who connected?"
+            ),
 
-            try:
+            (
+                "unknown_client.exe",
+                "https://i.imgur.com/t8dAqQp.png",
+                "you left the ports open."
+            ),
 
-                await wait_msg.edit(
-                    content=
-                    f"```Connecting to AircraftNode... {i}s```"
-                )
+            (
+                "Container Watcher",
+                "https://i.imgur.com/8Km9tLL.png",
+                "Disconnecting unknown user..."
+            ),
 
-            except:
+            (
+                "unknown_client.exe",
+                "https://i.imgur.com/t8dAqQp.png",
+                "too late"
+            ),
 
-                pass
+            (
+                "unknown_client.exe",
+                "https://i.imgur.com/t8dAqQp.png",
+                "I already restored the archive."
+            )
+        ]
+
+        for username, avatar, content in hacker_messages:
+
+            await webhook.send(
+                content=content,
+                username=username,
+                avatar_url=avatar
+            )
+
+            await asyncio.sleep(2)
 
         # =================================================
         # CRASH
@@ -449,8 +545,6 @@ class Moderation(commands.Cog):
             "Connection ended - MongoDB",
 
             "Connection ended - AircraftDB",
-
-            "Connection ended",
 
             "Connection ended - Server",
 
@@ -467,44 +561,44 @@ class Moderation(commands.Cog):
                 f"```ansi\n{line}\n```"
             )
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1)
 
         # =================================================
-        # HACKER EVENT
+        # CORRUPTION
         # =================================================
 
-        await asyncio.sleep(3)
-
-        hacker_lines = [
+        corruption = [
 
             "01010100 01001000 01000101 01011001",
 
-            "injecting unknown payload...",
+            "injecting payload...",
 
-            "access granted",
-
-            "bypass successful",
-
-            "AircraftCore breached",
-
-            "who are you?",
-
-            "you were not supposed to see this",
-
-            "restoring hidden archive",
+            "restoring hidden memory...",
 
             "memory corruption detected",
 
-            "ERROR ERROR ERROR"
+            "AircraftCore breached",
+
+            "trace failed",
+
+            "ERROR ERROR ERROR",
+
+            "███ corrupted ███",
+
+            "WHO ARE YOU",
+
+            "reconnect? reconnect?",
+
+            "/// system failure ///"
         ]
 
-        for line in hacker_lines:
+        for msg in corruption:
 
             await ctx.send(
-                f"```{line}```"
+                f"```{msg}```"
             )
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(1.5)
 
         # =================================================
         # FINAL EMBED
@@ -515,11 +609,15 @@ class Moderation(commands.Cog):
             description=(
                 "`origin unknown`\n"
                 "`connection unstable`\n"
-                "`memory restored`\n\n"
-                "An external client "
-                "has accessed Aircraft Core."
+                "`archive restored`\n\n"
+                "Aircraft Core integrity failed.\n"
+                "External entity still connected."
             ),
             color=0xff0000
+        )
+
+        embed.set_image(
+            url="https://i.imgur.com/3ZUrjUP.gif"
         )
 
         embed.set_footer(
@@ -529,33 +627,16 @@ class Moderation(commands.Cog):
         await ctx.send(embed=embed)
 
         # =================================================
-        # STATIC
+        # DELETE WEBHOOK
         # =================================================
 
-        static = [
+        try:
 
-            "█ █ █ █ █ █",
+            await webhook.delete()
 
-            "unknown_client.exe",
+        except:
 
-            "#$@!$#!@#!@",
-
-            "TRACE FAILED",
-
-            "reconnect? reconnect?",
-
-            "0110010101010101",
-
-            "/// corrupted ///"
-        ]
-
-        for s in static:
-
-            await asyncio.sleep(1)
-
-            await ctx.send(
-                f"```{s}```"
-            )
+            pass
 
 # =====================================================
 # SETUP

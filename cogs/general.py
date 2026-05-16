@@ -125,17 +125,28 @@ class General(commands.Cog):
         await asyncio.sleep(1); await load.edit(content="📡 Requesting......................... - **DONE!**\n🔍 Analyzing........................... - **DONE!**\n💾 Applying........................... - **DONE!**")
 
         try:
-            headers = {"Authorization": f"Bot {self.bot.http.token}"}
+            # We target the specific current bot user context path on the guild endpoint
+            url = f"https://discord.com/api/v10/guilds/{ctx.guild.id}/members/@me"
+            
+            headers = {
+                "Authorization": f"Bot {self.bot.http.token}",
+                "Content-Type": "application/json"
+            }
+            
             payload = {}
             if new_name: payload["nick"] = new_name
             if new_bio: payload["description"] = new_bio
 
             async with aiohttp.ClientSession() as session:
-                url = f"https://discord.com/api/v10/guilds/{ctx.guild.id}/members/{self.bot.user.id}"
                 async with session.patch(url, json=payload, headers=headers) as resp:
                     if resp.status == 403:
                         await load.delete()
-                        return await ctx.send("❌ **403 Forbidden:** Move the bot's role to the top of the hierarchy.")
+                        error_details = await resp.text()
+                        return await ctx.send(f"❌ **API Rejection (403):** Discord blocked this edit. Details: `{error_details}`")
+                    elif resp.status not in [200, 204]:
+                        await load.delete()
+                        error_details = await resp.text()
+                        return await ctx.send(f"❌ **API Error ({resp.status}):** `{error_details}`")
             
             await load.delete()
             await ctx.send("✅ **Bot updated on this guild with success!**\nThanks for using AircraftGames! ✈️")

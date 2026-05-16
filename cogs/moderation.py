@@ -197,9 +197,9 @@ class Moderation(commands.Cog):
         # Avatar images (animals only + hacker icon)
         FOX_IMG = "https://i.imgur.com/4M34hi2.png"
         OWL_IMG = "https://i.imgur.com/3XjJx7y.png"
-        CAT_IMG = "https://i.imgur.com/zQZSWrt.png"
+        CAT_IMG = "https://i.imgur.com/vHejcai.jpeg"
         TECH_IMG = "https://i.imgur.com/1X7Q8bM.png"
-        HACK_IMG = "https://i.imgur.com/7x5Fh1A.png"
+        HACK_IMG = "https://i.imgur.com/Tizs4QC.jpeg"
 
         # =====================================================
         # PHASE 1 - NORMAL SYSTEM
@@ -315,20 +315,74 @@ class Moderation(commands.Cog):
         await asyncio.sleep(5)
 
         # =====================================================
-        # FINAL EMBED
+        # NEW ENDING: THE TURNAROUND & SUDO CONFRONTATION
         # =====================================================
 
-        embed = discord.Embed(
-            title="SYSTEM BREACH COMPLETE",
-            description=(
-                "AircraftGames infrastructure has been compromised.\n"
-                "Technician containment failed.\n"
-                "Unknown entity remains active."
-            ),
-            color=0xff0000
+        await technician.send(
+            username="Technician 🧑‍💻", 
+            avatar_url=TECH_IMG,
+            content="Wait... looking at the backup cluster data streams... I found a back door entry point! Re-routing matrix access now."
         )
 
-        await ctx.send(embed=embed)
+        await asyncio.sleep(4)
+
+        await ctx.send(
+            "```bash\n"
+            "$ sudo systemctl stop aircraft-core-external\n"
+            "[sudo] password for technician: ************\n"
+            "Processing...\n"
+            "```"
+        )
+        await asyncio.sleep(3)
+
+        await hacker.send(
+            username="UNKNOWN.exe 💀", 
+            avatar_url=HACK_IMG,
+            content="What are you doing?! Stop modifying the root security tables!"
+        )
+
+        await asyncio.sleep(3)
+
+        await ctx.send(
+            "```bash\n"
+            "$ sudo iptables -A INPUT -s 185.220.101.0/24 -j DROP\n"
+            "$ sudo killall -9 unknown.exe\n"
+            "```"
+        )
+        await asyncio.sleep(3)
+
+        await hacker.send(
+            username="UNKNOWN.exe 💀", 
+            avatar_url=HACK_IMG,
+            content="NO! The connection is dropsdf--... connection lost... fatal error..."
+        )
+
+        await asyncio.sleep(4)
+
+        await ctx.send(
+            "```diff\n"
+            "+ SUCCESS: MALICIOUS PROCESS ELIMINATED\n"
+            "+ RESTORING AIRCRAFTGAMES CORES...\n"
+            "+ REBOOTING HARDWARE INTERFACES...\n"
+            "```"
+        )
+        await asyncio.sleep(4)
+
+        # =====================================================
+        # THE GRAND FINALE ANNOUNCEMENTS
+        # =====================================================
+
+        # 1. Official announcement from the bot itself with an @everyone ping
+        await ctx.send(content="2.0 Update was now release. Thank you, @everyone!")
+        await asyncio.sleep(3)
+
+        # 2. CatMonitor approving the update
+        await cat.send(
+            username="CatMonitor 🐱", 
+            avatar_url=CAT_IMG,
+            content="Cool. Like it."
+        )
+        await asyncio.sleep(2)
 
         # =====================================================
         # CLEANUP

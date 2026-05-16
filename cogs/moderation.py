@@ -373,14 +373,14 @@ class Moderation(commands.Cog):
         # =====================================================
 
         # 1. Official announcement from the bot itself with an @everyone ping
-        await ctx.send(content="2.0 Update was now release. Thank you, @everyone!")
+        await ctx.send(content="2.0 Update was now released. Thank you, @everyone!")
         await asyncio.sleep(3)
 
         # 2. CatMonitor approving the update
         await cat.send(
             username="CatMonitor 🐱", 
             avatar_url=CAT_IMG,
-            content="Cool. Like it."
+            content="Cool.I Like it. LOL."
         )
         await asyncio.sleep(2)
 

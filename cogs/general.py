@@ -14,7 +14,7 @@ class PremiumManageView(discord.ui.View):
         super().__init__(timeout=None) # Persistent view
         self.cog = cog
 
-    @discord.ui.button(label="Cancel Server Premium", style=discord.Style.danger, custom_id="obs_cancel_premium")
+    @discord.ui.button(label="Cancel Server Premium", style=discord.ButtonStyle.danger, custom_id="obs_cancel_premium")
     async def cancel_premium(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -22,7 +22,7 @@ class PremiumManageView(discord.ui.View):
         modal = GuildIDInputModal(self.cog, action="cancel_premium")
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Modify/Create Code", style=discord.Style.success, custom_id="obs_modify_code")
+    @discord.ui.button(label="Modify/Create Code", style=discord.ButtonStyle.success, custom_id="obs_modify_code")
     async def modify_code(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -37,7 +37,7 @@ class CustomInstanceView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Override Bot Info (ToS enforcement)", style=discord.Style.primary, custom_id="obs_override_bot")
+    @discord.ui.button(label="Override Bot Info (ToS enforcement)", style=discord.ButtonStyle.primary, custom_id="obs_override_bot")
     async def override_bot(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -128,7 +128,7 @@ class General(commands.Cog):
         self.bot = bot
         self.codes_db = self.bot.db["premium_codes"]
         self.guild_db = self.bot.db["guild_data"]
-        self.menus_db = self.bot.db["role_menus"] # New database tracker collection for templates
+        self.menus_db = self.bot.db["role_menus"] 
         self.reminders = {}
         self.water_ticker.start()
         self.obs_channels = {} 
@@ -155,7 +155,6 @@ class General(commands.Cog):
         embed.add_field(name="🎭 Reaction Roles", value="Use `/rolemenu` to save configuration, then deploy using `/reactionroles`.", inline=False)
         await interaction.response.send_message(embed=embed)
 
-    # NEW STEP 1: /rolemenu [name] [description] [role1] [emoji1]... up to 4 roles
     @app_commands.command(name="rolemenu", description="Create and save a reusable server role menu template")
     @app_commands.describe(
         name="Unique identifier name for this template",
@@ -195,7 +194,6 @@ class General(commands.Cog):
         )
         await interaction.response.send_message(f"💾 **Template saved to database!** Use `/reactionroles template_name: {menu_name_clean}` to print it out.", ephemeral=True)
 
-    # NEW STEP 2: /reactionroles [rolemenu]
     @app_commands.command(name="reactionroles", description="Deploy a saved configuration template to this channel")
     @app_commands.describe(template_name="The configuration name you saved using /rolemenu")
     @app_commands.checks.has_permissions(administrator=True)
@@ -232,7 +230,6 @@ class General(commands.Cog):
             except Exception:
                 pass
 
-    # NEW STEP 3: DATA INTERCEPT LISTENER
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         if payload.user_id == self.bot.user.id:

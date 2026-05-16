@@ -105,14 +105,16 @@ class General(commands.Cog):
             await m_name.delete(); await p1.delete()
         except asyncio.TimeoutError: return await ctx.send("❌ Timed out.")
 
-        p2 = await ctx.send("📝 **Bio:** Tell us your new bio (or type 'skip')")
+        p2 = await ctx.send("📝 **Bio:** Tell us your new bio - Max 190 chars (or type 'skip')")
         try:
             m_bio = await self.bot.wait_for('message', timeout=60.0, check=check)
             new_bio = m_bio.content if m_bio.content.lower() != "skip" else None
+            if new_bio and len(new_bio) > 190:
+                return await ctx.send("❌ Bio is too long! Discord caps per-guild bios at 190 characters.")
             await m_bio.delete(); await p2.delete()
         except asyncio.TimeoutError: return await ctx.send("❌ Timed out.")
 
-        confirm = await ctx.send("❓ **Are you sure you want to enable custom bot?** (yes/no)")
+        confirm = await ctx.send("❓ **Are you sure you want to apply these custom profile changes?** (yes/no)")
         try:
             m_conf = await self.bot.wait_for('message', timeout=30.0, check=check)
             if m_conf.content.lower() != "yes": return await ctx.send("❌ Cancelled.")
@@ -120,12 +122,11 @@ class General(commands.Cog):
         except asyncio.TimeoutError: return await ctx.send("❌ Timed out.")
 
         load = await ctx.send("🔄 **Processing...**")
-        await asyncio.sleep(1); await load.edit(content="📡 Requesting......................... - **DONE!**")
-        await asyncio.sleep(1); await load.edit(content="📡 Requesting......................... - **DONE!**\n🔍 Analyzing........................... - **DONE!**")
-        await asyncio.sleep(1); await load.edit(content="📡 Requesting......................... - **DONE!**\n🔍 Analyzing........................... - **DONE!**\n💾 Applying........................... - **DONE!**")
+        await asyncio.sleep(0.5); await load.edit(content="📡 Requesting......................... - **DONE!**")
+        await asyncio.sleep(0.5); await load.edit(content="📡 Requesting......................... - **DONE!**\n🔍 Analyzing........................... - **DONE!**")
+        await asyncio.sleep(0.5); await load.edit(content="📡 Requesting......................... - **DONE!**\n🔍 Analyzing........................... - **DONE!**\n💾 Applying........................... - **DONE!**")
 
         try:
-            # We target the specific current bot user context path on the guild endpoint
             url = f"https://discord.com/api/v10/guilds/{ctx.guild.id}/members/@me"
             
             headers = {
@@ -135,7 +136,11 @@ class General(commands.Cog):
             
             payload = {}
             if new_name: payload["nick"] = new_name
-            if new_bio: payload["description"] = new_bio
+            if new_bio: payload["bio"] = new_bio
+
+            if not payload:
+                await load.delete()
+                return await ctx.send("ℹ️ No updates were provided. Profile left unchanged.")
 
             async with aiohttp.ClientSession() as session:
                 async with session.patch(url, json=payload, headers=headers) as resp:
@@ -149,7 +154,7 @@ class General(commands.Cog):
                         return await ctx.send(f"❌ **API Error ({resp.status}):** `{error_details}`")
             
             await load.delete()
-            await ctx.send("✅ **Bot updated on this guild with success!**\nThanks for using AircraftGames! ✈️")
+            await ctx.send("✅ **Bot profile updated on this guild with success!**\nThanks for using AircraftGames! ✈️")
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
 
@@ -170,7 +175,7 @@ class General(commands.Cog):
         except:
             await ctx.send(f"✅ Code: `{new_code}`")
 
-    @app_commands.command(name="drinkwater", description="Setup hydrations alerts")
+    @app_commands.command(name="drinkwater", description="Setup hydration alerts")
     @app_commands.describe(
         channel="Channel to post reminders", 
         fromwheninwhen="Interval in minutes (e.g. 60)", 

@@ -12,9 +12,9 @@ class Moderation(commands.Cog):
         self.bot = bot
         self.db = bot.db
 
-    # =========================
-    # HELPER
-    # =========================
+    # =====================================================
+    # HELPERS
+    # =====================================================
 
     async def get_msg(self, guild_id, type):
         data = await self.db["settings"].find_one({
@@ -22,9 +22,9 @@ class Moderation(commands.Cog):
         })
         return data.get(type) if data else None
 
-    # =========================
-    # BLACKLIST LISTENER
-    # =========================
+    # =====================================================
+    # BLACKLIST SYSTEM
+    # =====================================================
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -42,41 +42,50 @@ class Moderation(commands.Cog):
             try:
                 await message.delete()
                 await message.channel.send(
-                    f"{message.author.mention}, you used a blacklisted word.",
+                    f"{message.author.mention}, blacklisted word detected.",
                     delete_after=5
                 )
-            except discord.Forbidden:
+            except:
                 pass
 
-    # =========================
-    # COMMANDS
-    # =========================
-
-    @app_commands.command(name="blacklistword")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def blacklistword(self, itx, word: str):
-
-        await self.db["settings"].update_one(
-            {"guild_id": str(itx.guild_id)},
-            {"$addToSet": {"blacklisted_words": word.lower()}},
-            upsert=True
-        )
-
-        await itx.response.send_message(f"✅ `{word}` blacklisted.", ephemeral=True)
+    # =====================================================
+    # MODERATION COMMANDS
+    # =====================================================
 
     @app_commands.command(name="warn")
     @app_commands.checks.has_permissions(moderate_members=True)
-    async def warn(self, itx, member: discord.Member, reason: str):
+    async def warn(self, itx: discord.Interaction, member: discord.Member, reason: str):
+        # Fetch custom warn message from dashboard settings
+        custom_msg = await self.get_msg(itx.guild.id, "warn_message")
+        
+        if custom_msg:
+            # Replaces placeholders if your dashboard supports them
+            dm_text = custom_msg.replace("{reason}", reason).replace("{guild}", itx.guild.name)
+        else:
+            dm_text = f"⚠️ Warned in {itx.guild.name}: {reason}"
 
-        await member.send(f"⚠️ Warned: {reason}")
+        try:
+            await member.send(dm_text)
+        except:
+            pass
+
         await itx.response.send_message(f"Warned {member.mention}")
 
     @app_commands.command(name="kick")
     @app_commands.checks.has_permissions(kick_members=True)
-    async def kick(self, itx, member: discord.Member, reason: str = "No reason"):
+    async def kick(self, itx: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+        # Fetch custom kick message from dashboard settings
+        custom_msg = await self.get_msg(itx.guild.id, "kick_message")
+        
+        if custom_msg:
+            dm_text = custom_msg.replace("{reason}", reason).replace("{guild}", itx.guild.name)
+        else:
+            dm_text = f"👞 Kicked from {itx.guild.name}: {reason}"
 
         try:
-            await member.send(f"👞 Kicked: {reason}")
+            await member.send(dm_text)
+            # Short buffer delay to allow the DM packet to send before breaking connection
+            await asyncio.sleep(0.5)
         except:
             pass
 
@@ -85,49 +94,52 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="ban")
     @app_commands.checks.has_permissions(ban_members=True)
-    async def ban(self, itx, member: discord.Member, reason: str = "No reason"):
+    async def ban(self, itx: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+        # Fetch custom ban message from dashboard settings
+        custom_msg = await self.get_msg(itx.guild.id, "ban_message")
+        
+        if custom_msg:
+            dm_text = custom_msg.replace("{reason}", reason).replace("{guild}", itx.guild.name)
+        else:
+            dm_text = f"🔨 Banned from {itx.guild.name}: {reason}"
+
+        try:
+            await member.send(dm_text)
+            await asyncio.sleep(0.5)
+        except:
+            pass
 
         await member.ban(reason=reason)
         await itx.response.send_message(f"Banned {member.name}")
 
     @app_commands.command(name="timeout")
     @app_commands.checks.has_permissions(moderate_members=True)
-    async def timeout(self, itx, member: discord.Member, minutes: int, reason: str = "No reason"):
+    async def timeout(self, itx: discord.Interaction, member: discord.Member, minutes: int, reason: str = "No reason"):
+        # Fetch custom timeout message from dashboard settings
+        custom_msg = await self.get_msg(itx.guild.id, "timeout_message")
+        
+        if custom_msg:
+            dm_text = custom_msg.replace("{reason}", reason).replace("{minutes}", str(minutes)).replace("{guild}", itx.guild.name)
+        else:
+            dm_text = f"⏳ Timed out in {itx.guild.name} for {minutes}m: {reason}"
+
+        try:
+            await member.send(dm_text)
+        except:
+            pass
 
         await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
-        await itx.response.send_message(f"Timed out {member.name} for {minutes}m")
+        await itx.response.send_message(f"Timed out {member.name}")
 
     @app_commands.command(name="clear")
     @app_commands.checks.has_permissions(manage_messages=True)
-    async def clear(self, itx, amount: int):
-
+    async def clear(self, itx: discord.Interaction, amount: int):
         await itx.response.defer(ephemeral=True)
         deleted = await itx.channel.purge(limit=amount)
         await itx.followup.send(f"Deleted {len(deleted)} messages")
 
-    @app_commands.command(name="slowmode")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def slowmode(self, itx, seconds: int):
-
-        await itx.channel.edit(slowmode_delay=seconds)
-        await itx.response.send_message(f"Slowmode: {seconds}s")
-
-    @app_commands.command(name="lock")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def lock(self, itx):
-
-        await itx.channel.set_permissions(itx.guild.default_role, send_messages=False)
-        await itx.response.send_message("Channel locked")
-
-    @app_commands.command(name="unlock")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def unlock(self, itx):
-
-        await itx.channel.set_permissions(itx.guild.default_role, send_messages=True)
-        await itx.response.send_message("Channel unlocked")
-
     # =====================================================
-    # 🔥 LIVE EVENT (SAFE CINEMATIC VERSION)
+    # 🔥 LIVE EVENT (CINEMATIC STORY VERSION)
     # =====================================================
 
     @commands.command(name="owner-2-live-event")
@@ -135,7 +147,7 @@ class Moderation(commands.Cog):
 
         app = await self.bot.application_info()
 
-        # AUTH CHECK
+        # AUTH
         if ctx.author.id != app.owner.id and not ctx.author.guild_permissions.administrator:
             if app.team:
                 if ctx.author.id not in [m.id for m in app.team.members]:
@@ -143,102 +155,191 @@ class Moderation(commands.Cog):
             else:
                 return await ctx.send("❌ Unauthorized.")
 
-        # START SCREEN
-        msg = await ctx.send("```yaml\nSYSTEM INITIALIZING...\nLOADING MODULES...\n```")
+        # =====================================================
+        # INTRO SYSTEM LOG
+        # =====================================================
+
+        await ctx.send(
+            "```yaml\n"
+            "AircraftGames CORE INITIALIZING...\n"
+            "Loading Observability Layer...\n"
+            "Loading Security Nodes...\n"
+            "Loading AI Systems...\n"
+            "```"
+        )
 
         await asyncio.sleep(3)
 
-        await msg.edit(content="```bash\nSYSTEM ONLINE\nMONGO CONNECTED\nDISCORD SYNC OK\nSTATUS: STABLE\n```")
+        await ctx.send(
+            "```bash\n"
+            "SYSTEM ONLINE\n"
+            "MongoDB CONNECTED\n"
+            "Discord Gateway STABLE\n"
+            "Status: Monitoring active systems\n"
+            "```"
+        )
 
         await asyncio.sleep(3)
 
-        # WEBHOOKS (ANIMAL AI NODES ONLY)
+        # =====================================================
+        # WEBHOOK CHARACTERS (WITH IMAGES)
+        # =====================================================
+
         try:
-            fox = await ctx.channel.create_webhook(name="FoxNode 🦊")
-            cat = await ctx.channel.create_webhook(name="CatCore 🐱")
-            owl = await ctx.channel.create_webhook(name="OwlWatch 🦉")
-            rabbit = await ctx.channel.create_webhook(name="RabbitAI 🐰")
+            technician = await ctx.channel.create_webhook(name="Technician 🧑‍💻")
+            fox = await ctx.channel.create_webhook(name="FoxCore 🦊")
+            owl = await ctx.channel.create_webhook(name="OwlSecurity 🦉")
+            cat = await ctx.channel.create_webhook(name="CatMonitor 🐱")
+            hacker = await ctx.channel.create_webhook(name="UNKNOWN.exe 💀")
         except:
-            return await ctx.send("❌ Missing webhook permission.")
+            return await ctx.send("❌ Missing Manage Webhooks permission.")
 
-        # PHASE 1
-        await fox.send("System stable 🦊")
+        # Avatar images (animals only + hacker icon)
+        FOX_IMG = "https://i.imgur.com/4M34hi2.png"
+        OWL_IMG = "https://i.imgur.com/3XjJx7y.png"
+        CAT_IMG = "https://i.imgur.com/zQZSWrt.png"
+        TECH_IMG = "https://i.imgur.com/1X7Q8bM.png"
+        HACK_IMG = "https://i.imgur.com/7x5Fh1A.png"
+
+        # =====================================================
+        # PHASE 1 - NORMAL SYSTEM
+        # =====================================================
+
+        await fox.send(username="FoxCore 🦊", avatar_url=FOX_IMG,
+                       content="All systems stable.")
+
         await asyncio.sleep(3)
 
-        await cat.send("Memory OK 🐱")
+        await cat.send(username="CatMonitor 🐱", avatar_url=CAT_IMG,
+                       content="Memory usage normal.")
+
         await asyncio.sleep(3)
 
-        await owl.send("Security clean 🦉")
-        await asyncio.sleep(3)
-
-        await rabbit.send("Latency normal 🐰")
+        await owl.send(username="OwlSecurity 🦉", avatar_url=OWL_IMG,
+                       content="Security scan clean.")
 
         await asyncio.sleep(4)
 
-        # PHASE 2
-        warn = await ctx.send("```diff\n- minor anomaly detected\n```")
-
-        await asyncio.sleep(4)
-
-        await fox.send("Spike detected...")
-        await asyncio.sleep(3)
-
-        await owl.send("Tracing unknown traffic...")
-        await asyncio.sleep(3)
-
-        await cat.send("System still stable... for now.")
-
-        await asyncio.sleep(4)
-
-        # PHASE 3
-        await warn.edit(content="```diff\n- ANOMALY INCREASING\n- CORE INSTABILITY\n```")
-
-        await asyncio.sleep(4)
-
-        await rabbit.send("Something is inside the system.")
-        await asyncio.sleep(4)
-
-        await fox.send("External access detected.")
-        await asyncio.sleep(4)
-
-        await owl.send("Tracing failed.")
-
-        await asyncio.sleep(4)
-
-        # PHASE 4
-        glitch = await ctx.send("```fix\n[UNKNOWN ENTITY DETECTED]\n```")
+        await technician.send(username="Technician 🧑‍💻", avatar_url=TECH_IMG,
+                               content="AircraftGames running perfectly.")
 
         await asyncio.sleep(5)
 
-        await glitch.edit(content="```yaml\nENTITY: unknown_client.exe\nSTATUS: ACTIVE\n```")
+        # =====================================================
+        # PHASE 2 - FIRST ANOMALY
+        # =====================================================
+
+        await ctx.send("```diff\n- minor latency spike detected\n```")
+
+        await asyncio.sleep(4)
+
+        await owl.send(username="OwlSecurity 🦉", avatar_url=OWL_IMG,
+                       content="Something is pinging external nodes...")
+
+        await asyncio.sleep(4)
+
+        await cat.send(username="CatMonitor 2.0 🐱", avatar_url=CAT_IMG,
+                       content="I don’t like this pattern.")
+
+        await asyncio.sleep(4)
+
+        # =====================================================
+        # PHASE 3 - SYSTEM BREACH STARTS
+        # =====================================================
+
+        await ctx.send("```diff\n- SYSTEM INSTABILITY INCREASING\n```")
+
+        await asyncio.sleep(4)
+
+        await fox.send(username="FoxCore 🦊", avatar_url=FOX_IMG,
+                       content="Who opened external access?")
+
+        await asyncio.sleep(4)
+
+        await technician.send(username="Technician 🧑‍💻", avatar_url=TECH_IMG,
+                               content="No one should have access to core files...")
 
         await asyncio.sleep(5)
 
-        await fox.send("It is rewriting logs.")
+        # =====================================================
+        # HACKER APPEARS
+        # =====================================================
+
+        await hacker.send(username="UNKNOWN.exe 💀", avatar_url=HACK_IMG,
+                          content="I’m already inside.")
+
+        await asyncio.sleep(5)
+
+        await owl.send(username="OwlSecurity 🦉", avatar_url=OWL_IMG,
+                       content="TRACE FAILED.")
+
         await asyncio.sleep(4)
 
-        await cat.send("We are losing control.")
-        await asyncio.sleep(4)
+        # =====================================================
+        # PHASE 4 - TECHNICIAN VS HACKER
+        # =====================================================
 
-        await owl.send("Disconnect NOW.")
+        await technician.send(username="Technician 🧑‍💻", avatar_url=TECH_IMG,
+                               content="Get out of my system.")
 
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
 
-        # FINAL
+        await hacker.send(username="UNKNOWN.exe 💀", avatar_url=HACK_IMG,
+                          content="You built it. I just opened the door.")
+
+        await asyncio.sleep(6)
+
+        await technician.send(username="Technician 🧑‍💻", avatar_url=TECH_IMG,
+                               content="Firewall reinforcements ONLINE.")
+
+        await asyncio.sleep(5)
+
+        await hacker.send(username="UNKNOWN.exe 💀", avatar_url=HACK_IMG,
+                          content="Too slow.")
+
+        await asyncio.sleep(5)
+
+        # =====================================================
+        # FINAL CORRUPTION
+        # =====================================================
+
+        await ctx.send(
+            "```yaml\n"
+            "AircraftGames CORE STATUS:\n"
+            "CORRUPTED\n"
+            "LOGS: REWRITTEN\n"
+            "ACCESS: LOST\n"
+            "```"
+        )
+
+        await asyncio.sleep(5)
+
+        # =====================================================
+        # FINAL EMBED
+        # =====================================================
+
         embed = discord.Embed(
-            title="SYSTEM BREACH",
-            description="External entity integrated into core system.",
+            title="SYSTEM BREACH COMPLETE",
+            description=(
+                "AircraftGames infrastructure has been compromised.\n"
+                "Technician containment failed.\n"
+                "Unknown entity remains active."
+            ),
             color=0xff0000
         )
 
         await ctx.send(embed=embed)
 
+        # =====================================================
         # CLEANUP
+        # =====================================================
+
         try:
             await fox.delete()
-            await cat.delete()
             await owl.delete()
-            await rabbit.delete()
+            await cat.delete()
+            await technician.delete()
+            await hacker.delete()
         except:
             pass
 

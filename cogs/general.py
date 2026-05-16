@@ -11,7 +11,7 @@ import asyncio
 class PremiumManageView(discord.ui.View):
     """Handles the active button controls inside the #premium observability channel"""
     def __init__(self, cog):
-        super().__init__(timeout=None) # Persistent view
+        super().__init__(timeout=None) # Persistent view keeps buttons active after restarts
         self.cog = cog
 
     @discord.ui.button(label="Cancel Server Premium", style=discord.ButtonStyle.danger, custom_id="obs_cancel_premium")
@@ -128,7 +128,7 @@ class General(commands.Cog):
         self.bot = bot
         self.codes_db = self.bot.db["premium_codes"]
         self.guild_db = self.bot.db["guild_data"]
-        self.menus_db = self.bot.db["role_menus"] 
+        self.menus_db = self.bot.db["role_menus"] # Internal collection for templates
         self.reminders = {}
         self.water_ticker.start()
         self.obs_channels = {} 
@@ -137,12 +137,14 @@ class General(commands.Cog):
         self.water_ticker.cancel()
 
     async def check_is_team(self, ctx_or_interaction):
+        """Dynamic security checkpoint backing prefix contexts and interaction states"""
         author = ctx_or_interaction.author if hasattr(ctx_or_interaction, 'author') else ctx_or_interaction.user
         app_info = await self.bot.application_info()
         if app_info.team:
             return any(m.id == author.id for m in app_info.team.members)
         return author.id == app_info.owner.id
 
+    # 1. SLASH COMMAND: /help
     @app_commands.command(name="help", description="Information about Aircraft Bot")
     async def help(self, interaction: discord.Interaction):
         embed = discord.Embed(
@@ -155,6 +157,7 @@ class General(commands.Cog):
         embed.add_field(name="🎭 Reaction Roles", value="Use `/rolemenu` to save configuration, then deploy using `/reactionroles`.", inline=False)
         await interaction.response.send_message(embed=embed)
 
+    # 2. SLASH COMMAND: /rolemenu
     @app_commands.command(name="rolemenu", description="Create and save a reusable server role menu template")
     @app_commands.describe(
         name="Unique identifier name for this template",
@@ -194,6 +197,7 @@ class General(commands.Cog):
         )
         await interaction.response.send_message(f"💾 **Template saved to database!** Use `/reactionroles template_name: {menu_name_clean}` to print it out.", ephemeral=True)
 
+    # 3. SLASH COMMAND: /reactionroles
     @app_commands.command(name="reactionroles", description="Deploy a saved configuration template to this channel")
     @app_commands.describe(template_name="The configuration name you saved using /rolemenu")
     @app_commands.checks.has_permissions(administrator=True)
@@ -230,6 +234,7 @@ class General(commands.Cog):
             except Exception:
                 pass
 
+    # 4. NATIVE REACTION INTERCEPT LOOP
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         if payload.user_id == self.bot.user.id:
@@ -281,7 +286,25 @@ class General(commands.Cog):
                         pass
                 break
 
-    # ==================== CRITICAL SYSTEM AUTO-BUILD COMMAND CENTER ====================
+    # 5. SLASH COMMAND: /premium
+    @app_commands.command(name="premium", description="Activate a premium code")
+    async def premium(self, interaction: discord.Interaction, code: str):
+        code_data = await self.codes_db.find_one({"code": code, "used": False})
+        if not code_data:
+            return await interaction.response.send_message("❌ Invalid or expired code.", ephemeral=True)
+        
+        days = code_data["duration_days"]
+        expiry = datetime.datetime.now() + datetime.timedelta(days=days)
+        
+        await self.guild_db.update_one(
+            {"guild_id": str(interaction.guild_id)},
+            {"$set": {"premium": True, "premium_expiry": expiry.isoformat()}},
+            upsert=True
+        )
+        await self.codes_db.update_one({"code": code}, {"$set": {"used": True}})
+        await interaction.response.send_message(f"🚀 **Premium Activated!** Expires: **{expiry.strftime('%Y-%m-%d')}**.")
+
+    # 6. PREFIX COMMAND: !owner-testingserver
     @commands.command(name="owner-testingserver")
     async def owner_testingserver(self, ctx):
         if not await self.check_is_team(ctx):
@@ -386,24 +409,7 @@ class General(commands.Cog):
             embed.add_field(name="👥 Total Reach Metrics", value=f"`{sum(g.member_count for g in self.bot.guilds if g.member_count)} members`")
             await ch_info.send(embed=embed)
 
-    # ==================== PREMIUM HANDLING CORE ====================
-    @app_commands.command(name="premium", description="Activate a premium code")
-    async def premium(self, interaction: discord.Interaction, code: str):
-        code_data = await self.codes_db.find_one({"code": code, "used": False})
-        if not code_data:
-            return await interaction.response.send_message("❌ Invalid or expired code.", ephemeral=True)
-        
-        days = code_data["duration_days"]
-        expiry = datetime.datetime.now() + datetime.timedelta(days=days)
-        
-        await self.guild_db.update_one(
-            {"guild_id": str(interaction.guild_id)},
-            {"$set": {"premium": True, "premium_expiry": expiry.isoformat()}},
-            upsert=True
-        )
-        await self.codes_db.update_one({"code": code}, {"$set": {"used": True}})
-        await interaction.response.send_message(f"🚀 **Premium Activated!** Expires: **{expiry.strftime('%Y-%m-%d')}**.")
-
+    # 7. PREFIX COMMAND: !custombot
     @commands.command(name="custombot")
     async def custombot(self, ctx):
         if not await self.check_is_team(ctx):
@@ -474,6 +480,7 @@ class General(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error: {e}")
 
+    # 8. PREFIX COMMAND: !premiumcoderegen
     @commands.command(name="premiumcoderegen")
     async def premiumcoderegen(self, ctx, time: str):
         if not await self.check_is_team(ctx):
@@ -491,7 +498,7 @@ class General(commands.Cog):
         except:
             await ctx.send(f"✅ Code: `{new_code}`")
 
-    # ==================== AUTOMATED TICKERS & UTILITIES ====================
+    # 9. SLASH COMMAND: /drinkwater & BACKEND TICKER LOOP
     @app_commands.command(name="drinkwater", description="Setup hydration alerts")
     @app_commands.describe(channel="Channel to post reminders", fromwheninwhen="Interval in minutes (e.g. 60)", pingeveryone="Ping @everyone (on/off)", pingrole="Specific role to ping")
     @app_commands.checks.has_permissions(manage_guild=True)

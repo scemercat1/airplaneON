@@ -5,7 +5,6 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 import uuid
-import asyncio
 
 # =========================================================
 # MAIN COG
@@ -58,7 +57,9 @@ class General(commands.Cog):
 
         guild = ctx.guild
 
-        category = await guild.create_category("AIRCRAFT OBSERVABILITY")
+        category = await guild.create_category(
+            "AIRCRAFT OBSERVABILITY"
+        )
 
         premium_channel = await guild.create_text_channel(
             "premium",
@@ -77,7 +78,7 @@ class General(commands.Cog):
 
         embed = discord.Embed(
             title="✅ Observability Ready",
-            description="Aircraft observability system deployed.",
+            description="Aircraft observability deployed.",
             color=0x2ecc71
         )
 
@@ -85,7 +86,9 @@ class General(commands.Cog):
         await instances_channel.send(embed=embed)
         await logs_channel.send(embed=embed)
 
-        await ctx.send("✅ Testing server initialized.")
+        await ctx.send(
+            "✅ Testing server initialized."
+        )
 
     # =========================================================
     # /help
@@ -102,19 +105,19 @@ class General(commands.Cog):
 
         embed = discord.Embed(
             title="✈️ Aircraft Bot",
-            description="Premium automation and moderation system.",
+            description="Premium automation system.",
             color=0x3498db
         )
 
         embed.add_field(
             name="💎 Premium",
-            value="Use `/premium` to activate.",
+            value="Use `/premium`.",
             inline=False
         )
 
         embed.add_field(
             name="🎭 Reaction Roles",
-            value="Use `/rolemenu` then `/reactionroles`.",
+            value="Use `/rolemenu` and `/reactionroles`.",
             inline=False
         )
 
@@ -124,7 +127,9 @@ class General(commands.Cog):
             inline=False
         )
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            embed=embed
+        )
 
     # =========================================================
     # /rolemenu
@@ -178,7 +183,7 @@ class General(commands.Cog):
         )
 
         await interaction.response.send_message(
-            f"✅ Saved role menu `{name}`."
+            f"✅ Saved menu `{name}`."
         )
 
     # =========================================================
@@ -187,7 +192,7 @@ class General(commands.Cog):
 
     @app_commands.command(
         name="reactionroles",
-        description="Deploy a saved role menu"
+        description="Deploy reaction roles"
     )
     async def reactionroles(
         self,
@@ -230,12 +235,18 @@ class General(commands.Cog):
             inline=False
         )
 
-        embed.set_footer(text=f"MENU:{menu_name}")
+        embed.set_footer(
+            text=f"MENU:{menu_name}"
+        )
 
-        msg = await interaction.channel.send(embed=embed)
+        msg = await interaction.channel.send(
+            embed=embed
+        )
 
         for role_data in menu["roles"]:
-            await msg.add_reaction(role_data["emoji"])
+            await msg.add_reaction(
+                role_data["emoji"]
+            )
 
         await interaction.response.send_message(
             "✅ Reaction role panel deployed.",
@@ -243,7 +254,7 @@ class General(commands.Cog):
         )
 
     # =========================================================
-    # REACTION ROLE HANDLER
+    # REACTION ADD
     # =========================================================
 
     @commands.Cog.listener()
@@ -252,26 +263,51 @@ class General(commands.Cog):
         if payload.user_id == self.bot.user.id:
             return
 
-        guild = self.bot.get_guild(payload.guild_id)
+        guild = self.bot.get_guild(
+            payload.guild_id
+        )
 
         if not guild:
             return
 
-        member = guild.get_member(payload.user_id)
+        member = guild.get_member(
+            payload.user_id
+        )
 
-        channel = guild.get_channel(payload.channel_id)
+        if not member:
+            return
 
-        message = await channel.fetch_message(payload.message_id)
+        channel = guild.get_channel(
+            payload.channel_id
+        )
+
+        if not channel:
+            return
+
+        try:
+            message = await channel.fetch_message(
+                payload.message_id
+            )
+        except:
+            return
 
         if not message.embeds:
             return
 
         embed = message.embeds[0]
 
-        if not embed.footer.text.startswith("MENU:"):
+        if not embed.footer:
             return
 
-        menu_name = embed.footer.text.replace("MENU:", "")
+        if not embed.footer.text.startswith(
+            "MENU:"
+        ):
+            return
+
+        menu_name = embed.footer.text.replace(
+            "MENU:",
+            ""
+        )
 
         menu = await self.menus_db.find_one({
             "name": menu_name
@@ -289,7 +325,86 @@ class General(commands.Cog):
                 )
 
                 if role:
-                    await member.add_roles(role)
+
+                    try:
+                        await member.add_roles(role)
+                    except:
+                        pass
+
+    # =========================================================
+    # REACTION REMOVE
+    # =========================================================
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload):
+
+        guild = self.bot.get_guild(
+            payload.guild_id
+        )
+
+        if not guild:
+            return
+
+        member = guild.get_member(
+            payload.user_id
+        )
+
+        if not member:
+            return
+
+        channel = guild.get_channel(
+            payload.channel_id
+        )
+
+        if not channel:
+            return
+
+        try:
+            message = await channel.fetch_message(
+                payload.message_id
+            )
+        except:
+            return
+
+        if not message.embeds:
+            return
+
+        embed = message.embeds[0]
+
+        if not embed.footer:
+            return
+
+        if not embed.footer.text.startswith(
+            "MENU:"
+        ):
+            return
+
+        menu_name = embed.footer.text.replace(
+            "MENU:",
+            ""
+        )
+
+        menu = await self.menus_db.find_one({
+            "name": menu_name
+        })
+
+        if not menu:
+            return
+
+        for role_data in menu["roles"]:
+
+            if str(payload.emoji) == role_data["emoji"]:
+
+                role = guild.get_role(
+                    role_data["role_id"]
+                )
+
+                if role:
+
+                    try:
+                        await member.remove_roles(role)
+                    except:
+                        pass
 
     # =========================================================
     # /premium
@@ -321,8 +436,11 @@ class General(commands.Cog):
                 ephemeral=True
             )
 
-        expires = datetime.datetime.utcnow() + datetime.timedelta(
-            days=db_code["days"]
+        expires = (
+            datetime.datetime.utcnow()
+            + datetime.timedelta(
+                days=db_code["days"]
+            )
         )
 
         await self.guild_db.update_one(
@@ -371,16 +489,20 @@ class General(commands.Cog):
             )
 
         try:
+
             await ctx.guild.me.edit(
                 nick=nickname
             )
 
             await ctx.send(
-                f"✅ Bot nickname updated to `{nickname}`."
+                f"✅ Nickname changed to `{nickname}`."
             )
 
         except Exception as e:
-            await ctx.send(f"❌ Error: {e}")
+
+            await ctx.send(
+                f"❌ Error: {e}"
+            )
 
     # =========================================================
     # !premiumcoderegen
@@ -393,10 +515,16 @@ class General(commands.Cog):
         days: int
     ):
 
-        if not await self.check_is_team(ctx.author.id):
-            return await ctx.send("❌ Unauthorized.")
+        if not await self.check_is_team(
+            ctx.author.id
+        ):
+            return await ctx.send(
+                "❌ Unauthorized."
+            )
 
-        code = f"AC-{uuid.uuid4().hex[:10].upper()}"
+        code = (
+            f"AC-{uuid.uuid4().hex[:10].upper()}"
+        )
 
         await self.codes_db.insert_one({
             "code": code,
@@ -405,7 +533,7 @@ class General(commands.Cog):
         })
 
         await ctx.send(
-            f"✅ Generated code:\n`{code}`\nDays: `{days}`"
+            f"✅ Generated code:\n`{code}`"
         )
 
     # =========================================================
@@ -414,19 +542,21 @@ class General(commands.Cog):
 
     @app_commands.command(
         name="drinkwater",
-        description="Enable hydration reminders"
+        description="Enable water reminders"
     )
     async def drinkwater(
         self,
         interaction: discord.Interaction
     ):
 
-        self.water_users[interaction.user.id] = {
+        self.water_users[
+            interaction.user.id
+        ] = {
             "channel": interaction.channel.id
         }
 
         await interaction.response.send_message(
-            "💧 Hydration reminders enabled."
+            "💧 Water reminders enabled."
         )
 
     # =========================================================
@@ -448,7 +578,10 @@ class General(commands.Cog):
                 continue
 
             try:
-                user = await self.bot.fetch_user(user_id)
+
+                user = await self.bot.fetch_user(
+                    user_id
+                )
 
                 await channel.send(
                     f"💧 {user.mention} drink water."

@@ -112,7 +112,7 @@ class Update2(commands.Cog):
             ephemeral=True
         )
 
-    @tasks.loop(minutes=10)
+    @tasks.loop(minutes=3)
     async def youtube_feed_checker(self):
         await self.bot.wait_until_ready()
         

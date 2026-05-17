@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 import uuid
+import aiohttp
 import asyncio
 
 # =========================================================
@@ -20,7 +21,6 @@ class PremiumPanelView(discord.ui.View):
         if not await self.cog.check_is_team(interaction.user.id):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
         
-        # Generates a quick 30-day code right through the interactive UI
         code = f"AC-{uuid.uuid4().hex[:10].upper()}"
         await self.cog.codes_db.insert_one({"code": code, "days": 30, "used": False})
         await interaction.response.send_message(f"✅ Generated 30-Day Premium Code:\n`{code}`\nUse `/premium` to activate it!", ephemeral=True)
@@ -37,7 +37,7 @@ class PremiumPanelView(discord.ui.View):
 class CustomInstanceView(discord.ui.View):
     """Buttons attached to the Custom Instances channel embed"""
     def __init__(self, cog):
-        super().__init__(timeout=None)  # Keeps buttons working permanently across bot restarts
+        super().__init__(timeout=None)
         self.cog = cog
 
     @discord.ui.button(label="⚙️ Reset All Nicknames", style=discord.Style.blurple, custom_id="panel_reset_instances")
@@ -45,8 +45,56 @@ class CustomInstanceView(discord.ui.View):
         if not await self.cog.check_is_team(interaction.user.id):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
             
-        await self.cog.guild_db.update_many({}, {"$unset": {"custombot_name": ""}})
-        await interaction.response.send_message("✅ Cleared custom name profile entries from DB.", ephemeral=True)
+        await self.cog.guild_db.update_many({}, {"$unset": {"custombot_name": "", "custombot_bio": ""}})
+        await interaction.response.send_message("✅ Cleared custom name and bio profile entries from DB.", ephemeral=True)
+
+
+# =========================================================
+# INTERACTIVE DATA ENTRY MODALS (OBSERVABILITY)
+# =========================================================
+
+class GuildIDInputModal(discord.ui.Modal, title="Target Guild Identification"):
+    guild_id = discord.ui.TextInput(label="Enter Guild ID", placeholder="123456789012345678")
+
+    def __init__(self, cog, action):
+        super().__init__()
+        self.cog = cog
+        self.action = action
+
+    async def on_submit(self, interaction: discord.Interaction):
+        g_id = self.guild_id.value.strip()
+        if self.action == "override_profile":
+            modal = ProfileOverrideModal(self.cog, g_id)
+            await interaction.response.send_modal(modal)
+
+
+class ProfileOverrideModal(discord.ui.Modal, title="Emergency Profile Override"):
+    new_name = discord.ui.TextInput(label="Reset Name (Type 'skip' to keep)", default="Reset Bot Name")
+    new_bio = discord.ui.TextInput(label="Reset Bio (Type 'skip' to keep)", default="Reset Bot Bio", style=discord.TextStyle.paragraph)
+
+    def __init__(self, cog, target_guild_id):
+        super().__init__()
+        self.cog = cog
+        self.target_guild_id = target_guild_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        url = f"https://discord.com/api/v10/guilds/{self.target_guild_id}/members/@me"
+        headers = {"Authorization": f"Bot {self.cog.bot.http.token}", "Content-Type": "application/json"}
+        payload = {}
+        
+        if self.new_name.value.lower() != "skip":
+            payload["nick"] = self.new_name.value
+        if self.new_bio.value.lower() != "skip":
+            payload["bio"] = self.new_bio.value
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(url, json=payload, headers=headers) as resp:
+                if resp.status in [200, 204]:
+                    await interaction.followup.send(f"✅ Executed override on guild {self.target_guild_id}.", ephemeral=True)
+                else:
+                    err = await resp.text()
+                    await interaction.followup.send(f"❌ API Failure ({resp.status}): {err}", ephemeral=True)
 
 
 # =========================================================
@@ -64,7 +112,7 @@ class General(commands.Cog):
         self.menus_db = bot.db["role_menus"]
         self.config_db = bot.db["system_config"]
 
-        # WATER REMINDERS
+        # WATER REMINDERS DATA STORAGE
         self.water_users = {}
 
         # COMMAND STATS
@@ -108,11 +156,9 @@ class General(commands.Cog):
     async def owner_testingserver(self, ctx):
         await self.register_command_use("owner%testingserver")
 
-        # SECURITY
         if not await self.check_is_team(ctx.author.id):
             return await ctx.send("❌ Unauthorized.")
 
-        # LIFETIME LIMIT
         usage = await self.config_db.find_one({"type": "testingserver_usage"})
         if not usage:
             await self.config_db.insert_one({"type": "testingserver_usage", "count": 0})
@@ -131,41 +177,29 @@ class General(commands.Cog):
 
         guild = ctx.guild
 
-        # DELETE EVERYTHING
         for channel in guild.channels:
             try:
                 await channel.delete()
             except:
                 pass
 
-        # CREATE CATEGORIES
         testing = await guild.create_category("TESTING")
         hangout = await guild.create_category("HANGOUT")
         observability = await guild.create_category("OBSERVABILITY")
 
-        # TESTING CHANNELS
         await guild.create_text_channel("test-1", category=testing)
         await guild.create_text_channel("test-2", category=testing)
         await guild.create_text_channel("test-3", category=testing)
-
-        # HANGOUT CHANNELS
         await guild.create_text_channel("counting", category=hangout)
         await guild.create_text_channel("games", category=hangout)
 
-        # OBSERVABILITY CHANNELS
         premium_channel = await guild.create_text_channel("premium", category=observability)
         custom_channel = await guild.create_text_channel("custominstances", category=observability)
         info_channel = await guild.create_text_channel("info", category=observability)
         await guild.create_text_channel("lolz", category=observability)
         await guild.create_voice_channel("lolZ2-fr", category=observability)
 
-        # PREMIUM PANEL (WITH INTERACTIVE BUTTON VIEWS ATTACHED)
-        premium_embed = discord.Embed(
-            title="💎 Premium Observability",
-            description="Premium servers & codes database overview.",
-            color=0xf1c40f
-        )
-
+        premium_embed = discord.Embed(title="💎 Premium Observability", description="Premium servers & codes database overview.", color=0xf1c40f)
         premium_servers = []
         async for data in self.guild_db.find({"premium": True}):
             premium_servers.append(f"• {data['guild_id']}")
@@ -174,39 +208,18 @@ class General(commands.Cog):
         async for code in self.codes_db.find():
             premium_codes.append(f"• {code['code']} | Used: {code['used']}")
 
-        premium_embed.add_field(
-            name="Servers",
-            value="\n".join(premium_servers) if premium_servers else "None",
-            inline=False
-        )
-        premium_embed.add_field(
-            name="Codes",
-            value="\n".join(premium_codes[:20]) if premium_codes else "None",
-            inline=False
-        )
-
+        premium_embed.add_field(name="Servers", value="\n".join(premium_servers) if premium_servers else "None", inline=False)
+        premium_embed.add_field(name="Codes", value="\n".join(premium_codes[:20]) if premium_codes else "None", inline=False)
         await premium_channel.send(embed=premium_embed, view=PremiumPanelView(self))
 
-        # CUSTOMBOT PANEL (WITH INTERACTIVE BUTTON VIEWS ATTACHED)
-        custom_embed = discord.Embed(
-            title="🤖 Custom Instances",
-            description="Servers utilizing configured instances.",
-            color=0x3498db
-        )
-
+        custom_embed = discord.Embed(title="🤖 Custom Instances", description="Servers utilizing configured instances.", color=0x3498db)
         custom_servers = []
         async for data in self.guild_db.find({"custombot_name": {"$exists": True}}):
             custom_servers.append(f"• {data['guild_id']} | {data.get('custombot_name')}")
 
-        custom_embed.add_field(
-            name="Instances",
-            value="\n".join(custom_servers) if custom_servers else "None",
-            inline=False
-        )
-
+        custom_embed.add_field(name="Instances", value="\n".join(custom_servers) if custom_servers else "None", inline=False)
         await custom_channel.send(embed=custom_embed, view=CustomInstanceView(self))
 
-        # INFO PANEL
         total_members = sum(g.member_count for g in self.bot.guilds)
         most_used = "None"
         if self.command_usage:
@@ -216,10 +229,8 @@ class General(commands.Cog):
         info_embed.add_field(name="Servers", value=str(len(self.bot.guilds)), inline=True)
         info_embed.add_field(name="Members", value=str(total_members), inline=True)
         info_embed.add_field(name="Most Used Command", value=most_used, inline=False)
-
         await info_channel.send(embed=info_embed)
 
-        # UPDATE USAGE
         await self.config_db.update_one({"type": "testingserver_usage"}, {"$inc": {"count": 1}})
 
     # =====================================================
@@ -258,7 +269,6 @@ class General(commands.Cog):
         await self.register_command_use("/rolemenu")
 
         data = [{"role_id": role1.id, "emoji": emoji1}]
-
         if role2 and emoji2:
             data.append({"role_id": role2.id, "emoji": emoji2})
         if role3 and emoji3:
@@ -269,7 +279,6 @@ class General(commands.Cog):
             {"$set": {"description": description, "roles": data}},
             upsert=True
         )
-
         await interaction.response.send_message(f"✅ Menu `{name}` saved.")
 
     # =====================================================
@@ -287,7 +296,6 @@ class General(commands.Cog):
 
         embed = discord.Embed(title="🎭 Reaction Roles", description=menu["description"], color=0x9b59b6)
         lines = []
-
         for role_data in menu["roles"]:
             role = interaction.guild.get_role(role_data["role_id"])
             if role:
@@ -297,7 +305,6 @@ class General(commands.Cog):
         embed.set_footer(text=f"MENU:{menu_name}")
 
         msg = await interaction.channel.send(embed=embed)
-
         for role_data in menu["roles"]:
             await msg.add_reaction(role_data["emoji"])
 
@@ -393,26 +400,68 @@ class General(commands.Cog):
         await interaction.response.send_message("✅ Premium activated.")
 
     # =====================================================
-    # !custombot COMMAND
+    # !custombot PREFIX COMMAND (CONVERSATIONAL INTERACTIVE SETUP)
     # =====================================================
 
     @commands.command(name="custombot")
-    async def custombot(self, ctx, *, nickname):
+    async def custombot(self, ctx):
         await self.register_command_use("!custombot")
 
+        # 1. PERMISSIONS SECURITY: MUST BE OWNER OR ADMIN
+        is_admin = ctx.author.guild_permissions.administrator
+        is_owner = ctx.author.id == ctx.guild.owner_id
+        if not (is_admin or is_owner):
+            return await ctx.send("❌ Only the Server Owner and Server Administrators can use this command.")
+
+        # 2. PREMIUM REQUIREMENT CHECK
         data = await self.guild_db.find_one({"guild_id": ctx.guild.id})
         if not data or not data.get("premium"):
-            return await ctx.send("❌ Premium required.")
+            return await ctx.send("❌ Premium required to deploy a custom bot profile instance.")
+
+        # Helper check to ensure bot only responds to the person who triggered the setup
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        # 3. INTERACTIVE CHAT DIALOGUE RUNTIME
+        await ctx.send("✨ Welcome to the custom bot setup!")
+        await ctx.send("📝 Please type the **New Bot Name** below:")
 
         try:
-            await ctx.guild.me.edit(nick=nickname)
-            await self.guild_db.update_one(
-                {"guild_id": ctx.guild.id},
-                {"$set": {"custombot_name": nickname}}
-            )
-            await ctx.send(f"✅ Changed to `{nickname}`")
-        except Exception as e:
-            await ctx.send(f"❌ {e}")
+            name_msg = await self.bot.wait_for('message', check=check, timeout=60.0)
+            nickname = name_msg.content.strip()
+            
+            await ctx.send("📝 Got it! Now, please type the **New Bot Bio** below:")
+            bio_msg = await self.bot.wait_for('message', check=check, timeout=120.0)
+            about_me = bio_msg.content.strip()
+        except asyncio.TimeoutError:
+            return await ctx.send("❌ Setup timed out due to inactivity. Please run `!custombot` again.")
+
+        # 4. RAW DISCORD member/@me PROFILE API TRIGGER
+        url = f"https://discord.com/api/v10/guilds/{ctx.guild.id}/members/@me"
+        headers = {
+            "Authorization": f"Bot {self.bot.http.token}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "nick": nickname,
+            "bio": about_me
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(url, json=payload, headers=headers) as resp:
+                if resp.status in [200, 204]:
+                    await self.guild_db.update_one(
+                        {"guild_id": ctx.guild.id},
+                        {"$set": {
+                            "custombot_name": nickname,
+                            "custombot_bio": about_me
+                        }},
+                        upsert=True
+                    )
+                    await ctx.send(f"✅ Server profile configuration applied successfully!\n**Name**: `{nickname}`\n**About Me**: `{about_me}`")
+                else:
+                    err_txt = await resp.text()
+                    await ctx.send(f"❌ API Failure ({resp.status}): {err_txt}")
 
     # =====================================================
     # !premiumcoderegen COMMAND
@@ -431,32 +480,84 @@ class General(commands.Cog):
         await ctx.send(f"✅ Generated:\n`{code}`")
 
     # =====================================================
-    # /drinkwater COMMAND
+    # /drinkwater SLASH COMMAND (HIGHLY CUSTOMIZABLE)
     # =====================================================
 
-    @app_commands.command(name="drinkwater", description="Enable hydration reminders")
-    async def drinkwater(self, interaction: discord.Interaction):
+    @app_commands.command(name="drinkwater", description="Configure an advanced hydration tracking reminder schedule")
+    @app_commands.describe(
+        channel="The text channel where reminders should be sent",
+        interval_minutes="How often to ping (in minutes) - e.g. 60",
+        everyone_ping="Turn @everyone ping on or off",
+        custom_role_ping="Select a specific role you want the bot to ping"
+    )
+    async def drinkwater(
+        self, 
+        interaction: discord.Interaction, 
+        channel: discord.TextChannel, 
+        interval_minutes: int,
+        everyone_ping: bool = False,
+        custom_role_ping: discord.Role = None
+    ):
         await self.register_command_use("/drinkwater")
 
-        self.water_users[interaction.user.id] = {"channel": interaction.channel.id}
-        await interaction.response.send_message("💧 Enabled.")
+        if interval_minutes < 1:
+            return await interaction.response.send_message("❌ Interval must be at least 1 minute or longer.", ephemeral=True)
+
+        role_id = custom_role_ping.id if custom_role_ping else None
+
+        # Store complete detailed customization metrics right inside your runtime collection map
+        self.water_users[interaction.user.id] = {
+            "channel_id": channel.id,
+            "interval": interval_minutes,
+            "everyone": everyone_ping,
+            "role_id": role_id,
+            "last_pinged": datetime.datetime.utcnow()
+        }
+
+        ping_details = "None"
+        if everyone_ping:
+            ping_details = "@everyone"
+        elif custom_role_ping:
+            ping_details = custom_role_ping.mention
+
+        embed = discord.Embed(title="💧 Hydration Schedule Set up", color=0x3498db)
+        embed.add_field(name="📍 Channel Target", value=channel.mention, inline=True)
+        embed.add_field(name="⏱️ Frequency", value=f"Every {interval_minutes} minutes", inline=True)
+        embed.add_field(name="📢 Custom Mention Ping", value=ping_details, inline=False)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # =====================================================
-    # HYDRATION LOOP
+    # HIGH FREQUENCY TICKER LOOP (EVALUATES TIMING PARAMS)
     # =====================================================
 
-    @tasks.loop(minutes=60)
+    @tasks.loop(minutes=1)
     async def water_ticker(self):
         await self.bot.wait_until_ready()
+        now = datetime.datetime.utcnow()
 
-        for user_id, data in self.water_users.items():
-            channel = self.bot.get_channel(data["channel"])
-            if not channel: continue
-            try:
-                user = await self.bot.fetch_user(user_id)
-                await channel.send(f"💧 {user.mention} drink water.")
-            except:
-                pass
+        # Iterate dynamically through all targeted configurations
+        for user_id, config in list(self.water_users.items()):
+            last_sent = config.get("last_pinged", now)
+            delta = (now - last_sent).total_seconds() / 60
+
+            if delta >= config["interval"]:
+                channel = self.bot.get_channel(config["channel_id"])
+                if not channel: continue
+
+                # Resolve pings string construction
+                ping_str = f"<@{user_id}>"
+                if config["everyone"]:
+                    ping_str += " @everyone"
+                elif config["role_id"]:
+                    ping_str += f" <@&{config['role_id']}>"
+
+                try:
+                    await channel.send(f"💧 {ping_str} Time to drink water and stay hydrated!")
+                    # Update timestamp marker to enforce cooldown parameters
+                    self.water_users[user_id]["last_pinged"] = now
+                except:
+                    pass
 
 
 # =========================================================

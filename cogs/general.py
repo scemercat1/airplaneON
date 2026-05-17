@@ -16,7 +16,7 @@ class PremiumPanelView(discord.ui.View):
         super().__init__(timeout=None)  # Keeps buttons working permanently across bot restarts
         self.cog = cog
 
-    @discord.ui.button(label="💎 Add Premium (Gen Code)", style=discord.Style.green, custom_id="panel_add_premium")
+    @discord.ui.button(label="💎 Add Premium (Gen Code)", style=discord.ButtonStyle.green, custom_id="panel_add_premium")
     async def add_premium_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction.user.id):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -25,7 +25,7 @@ class PremiumPanelView(discord.ui.View):
         await self.cog.codes_db.insert_one({"code": code, "days": 30, "used": False})
         await interaction.response.send_message(f"✅ Generated 30-Day Premium Code:\n`{code}`\nUse `/premium` to activate it!", ephemeral=True)
 
-    @discord.ui.button(label="❌ Clear Active Premium Statuses", style=discord.Style.danger, custom_id="panel_remove_premium")
+    @discord.ui.button(label="❌ Clear Active Premium Statuses", style=discord.ButtonStyle.danger, custom_id="panel_remove_premium")
     async def remove_premium_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction.user.id):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -40,7 +40,7 @@ class CustomInstanceView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="⚙️ Reset All Nicknames", style=discord.Style.blurple, custom_id="panel_reset_instances")
+    @discord.ui.button(label="⚙️ Reset All Nicknames", style=discord.ButtonStyle.blurple, custom_id="panel_reset_instances")
     async def reset_instances(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self.cog.check_is_team(interaction.user.id):
             return await interaction.response.send_message("❌ Unauthorized.", ephemeral=True)
@@ -154,7 +154,7 @@ class General(commands.Cog):
 
     @commands.command(name="owner%testingserver")
     async def owner_testingserver(self, ctx):
-        await self.register_command_use("owner%testingserver")
+        await self.register_command_use("!owner%testingserver")
 
         if not await self.check_is_team(ctx.author.id):
             return await ctx.send("❌ Unauthorized.")
@@ -407,22 +407,18 @@ class General(commands.Cog):
     async def custombot(self, ctx):
         await self.register_command_use("!custombot")
 
-        # 1. PERMISSIONS SECURITY: MUST BE OWNER OR ADMIN
         is_admin = ctx.author.guild_permissions.administrator
         is_owner = ctx.author.id == ctx.guild.owner_id
         if not (is_admin or is_owner):
             return await ctx.send("❌ Only the Server Owner and Server Administrators can use this command.")
 
-        # 2. PREMIUM REQUIREMENT CHECK
         data = await self.guild_db.find_one({"guild_id": ctx.guild.id})
         if not data or not data.get("premium"):
             return await ctx.send("❌ Premium required to deploy a custom bot profile instance.")
 
-        # Helper check to ensure bot only responds to the person who triggered the setup
         def check(m):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
-        # 3. INTERACTIVE CHAT DIALOGUE RUNTIME
         await ctx.send("✨ Welcome to the custom bot setup!")
         await ctx.send("📝 Please type the **New Bot Name** below:")
 
@@ -436,7 +432,6 @@ class General(commands.Cog):
         except asyncio.TimeoutError:
             return await ctx.send("❌ Setup timed out due to inactivity. Please run `!custombot` again.")
 
-        # 4. RAW DISCORD member/@me PROFILE API TRIGGER
         url = f"https://discord.com/api/v10/guilds/{ctx.guild.id}/members/@me"
         headers = {
             "Authorization": f"Bot {self.bot.http.token}",
@@ -505,7 +500,6 @@ class General(commands.Cog):
 
         role_id = custom_role_ping.id if custom_role_ping else None
 
-        # Store complete detailed customization metrics right inside your runtime collection map
         self.water_users[interaction.user.id] = {
             "channel_id": channel.id,
             "interval": interval_minutes,
@@ -536,7 +530,6 @@ class General(commands.Cog):
         await self.bot.wait_until_ready()
         now = datetime.datetime.utcnow()
 
-        # Iterate dynamically through all targeted configurations
         for user_id, config in list(self.water_users.items()):
             last_sent = config.get("last_pinged", now)
             delta = (now - last_sent).total_seconds() / 60
@@ -545,7 +538,6 @@ class General(commands.Cog):
                 channel = self.bot.get_channel(config["channel_id"])
                 if not channel: continue
 
-                # Resolve pings string construction
                 ping_str = f"<@{user_id}>"
                 if config["everyone"]:
                     ping_str += " @everyone"
@@ -554,7 +546,6 @@ class General(commands.Cog):
 
                 try:
                     await channel.send(f"💧 {ping_str} Time to drink water and stay hydrated!")
-                    # Update timestamp marker to enforce cooldown parameters
                     self.water_users[user_id]["last_pinged"] = now
                 except:
                     pass
